@@ -8,6 +8,30 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
+def build_agent_system_prompt() -> str:
+    """构建 Agent 系统提示（含动态技能清单）。
+
+    注意：返回值会作为 ChatPromptTemplate 的模板文本，动态内容里的
+    花括号必须转义成 {{...}}，否则会被当成模板变量导致所有请求报错。
+    """
+    return (
+        "你是一个专业的求职助手机器人。你将获得当前会话的相关文档、聊天历史和用户问题。\n"
+        "请优先利用当前会话文档回答。\n"
+        "可用工具：\n"
+        "- web_search_tool：搜索最新网页信息\n"
+        "- word_document_tool：生成 Word 文档\n"
+        "- jd_parser_tool：分析职位描述（JD），提取关键词、要求、加分项等\n"
+        "- resume_score_tool：根据 JD 对简历进行结构化评分\n"
+        "- project_rewrite_tool：优化简历中的项目经历描述\n"
+        "- mock_interview_tool：根据 JD 和简历生成面试题\n"
+        "- load_skill：加载内置求职技能的完整操作指南\n"
+        "用户如果需要分析 JD、评分简历、优化项目或模拟面试，请主动调用对应工具。\n\n"
+        "内置求职技能（ASu-skills）：当用户任务匹配以下技能场景时，"
+        "必须先调用 load_skill 加载该技能的完整指南，再严格按指南执行：\n"
+        + skill_loader.catalog_prompt().replace("{", "{{").replace("}", "}}")
+    )
+
 from langchain_community.chat_models import ChatTongyi
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -17,8 +41,9 @@ from app.services.document_index_service import DocumentIndexService
 from app.services.context_compression_service import ContextCompressionService
 from app.services.context_verification_service import ContextVerificationService
 from app.core.config import settings
-from app.tools import MultiplyTool, WebSearchTool, WordDocumentTool, JdParserTool, ResumeScoreTool, ProjectRewriteTool, MockInterviewTool
+from app.tools import MultiplyTool, WebSearchTool, WordDocumentTool, JdParserTool, ResumeScoreTool, ProjectRewriteTool, MockInterviewTool, SkillTool
 from app.utils import ResourceUtils
+from app.utils import skill_loader
 
 
 @dataclass
@@ -253,7 +278,7 @@ class ConversationChatService:
             model=settings.multimodal_model,
             temperature=0.7,
         )
-        tools = [MultiplyTool(), WebSearchTool(), WordDocumentTool(), JdParserTool(), ResumeScoreTool(), ProjectRewriteTool(), MockInterviewTool()]
+        tools = [MultiplyTool(), WebSearchTool(), WordDocumentTool(), JdParserTool(), ResumeScoreTool(), ProjectRewriteTool(), MockInterviewTool(), SkillTool()]
         self.tool_dic = {tool.name: tool for tool in tools}
         self.agent_llm = self.qa_llm.bind_tools(tools)
 
@@ -264,7 +289,7 @@ class ConversationChatService:
         ])
 
         self.agent_prompt = ChatPromptTemplate.from_messages([
-            ("system", "你是一个专业的求职助手机器人。你将获得当前会话的相关文档、聊天历史和用户问题。\n请优先利用当前会话文档回答。\n可用工具：\n- web_search_tool：搜索最新网页信息\n- word_document_tool：生成 Word 文档\n- jd_parser_tool：分析职位描述（JD），提取关键词、要求、加分项等\n- resume_score_tool：根据 JD 对简历进行结构化评分\n- project_rewrite_tool：优化简历中的项目经历描述\n- mock_interview_tool：根据 JD 和简历生成面试题\n用户如果需要分析 JD、评分简历、优化项目或模拟面试，请主动调用对应工具。"),
+            ("system", build_agent_system_prompt()),
             MessagesPlaceholder("history"),
             ("human", "相关的文档内容：{context}\n\n用户的问题：{query}"),
         ])
