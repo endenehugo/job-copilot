@@ -51,21 +51,53 @@ class ContextVerificationService:
         result = self._llm_verify(answer, context)
 
         # 计算幻觉风险等级
-        unsupported = result.get("unsupported_claims", [])
-        total_claims = len(unsupported) + len(result.get("supported_claims", []))
-        if total_claims == 0:
-            risk = "low"
-        else:
-            ratio = len(unsupported) / total_claims
-            if ratio >= 0.5:
-                risk = "high"
-            elif ratio >= 0.25:
-                risk = "medium"
-            else:
-                risk = "low"
-
-        result["hallucination_risk"] = risk
+        result["hallucination_risk"] = self._assess_risk(
+            result.get("supported_claims", []), result.get("unsupported_claims", [])
+        )
         return result
+
+    @staticmethod
+    def _assess_risk(supported_claims: list, unsupported_claims: list) -> str:
+        """幻觉风险分级。
+
+        基础规则：无支撑断言占比 ≥50% high、≥25% medium、否则 low。
+        升级规则：无支撑断言中含"编造的具体量化数据"（百分比/小数/倍数/多位数字）时，
+        low 至少升到 medium——编造具体数字比含糊其辞危害大得多（用户会更信任它）；
+        量化型无支撑断言达到两条，或占比已达 10%，直接判 high。
+        """
+        total = len(supported_claims) + len(unsupported_claims)
+        ratio = len(unsupported_claims) / total if total else 0.0
+
+        if ratio >= 0.5:
+            risk = "high"
+        elif ratio >= 0.25:
+            risk = "medium"
+        else:
+            risk = "low"
+
+        numeric_unsupported = [
+            claim for claim in unsupported_claims
+            if ContextVerificationService._has_concrete_number(str(claim))
+        ]
+        if numeric_unsupported:
+            if risk == "low":
+                risk = "medium"
+            if len(numeric_unsupported) >= 2 or ratio >= 0.10:
+                risk = "high"
+        return risk
+
+    @staticmethod
+    def _has_concrete_number(claim: str) -> bool:
+        """断言是否含"具体量化数据"：百分比、小数、倍数/万/亿、两位以上数字。"""
+        if re.search(r"\d+(?:\.\d+)?\s*[%％]", claim):
+            return True
+        if re.search(r"\d+\.\d+", claim):
+            return True
+        if re.search(r"\d+(?:\.\d+)?\s*(?:倍|万|亿)", claim):
+            return True
+        if re.search(r"\d{2,}", claim):
+            return True
+        return False
 
     def add_citations(self, answer: str, source_docs: list[dict]) -> str:
         """为回答添加引用标记。
