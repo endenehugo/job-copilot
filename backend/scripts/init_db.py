@@ -38,18 +38,22 @@ def main() -> int:
         connection.commit()
         print(f"数据库已就绪：{settings.mysql_database}")
         return 0
-    except pymysql.err.AccessDeniedError as exc:
-        print(f"建库失败（权限不足）：{exc}")
-        print("请用管理员账号手动执行：")
-        print(
-            f"  CREATE DATABASE IF NOT EXISTS `{settings.mysql_database}` "
-            f"DEFAULT CHARACTER SET {settings.mysql_charset};"
-        )
-        print("或为本用户授权：")
-        print(
-            f"  GRANT ALL PRIVILEGES ON `{settings.mysql_database}`.* "
-            f"TO '{settings.mysql_user}'@'%';"
-        )
+    except pymysql.err.MySQLError as exc:
+        errno = exc.args[0] if exc.args else None
+        if errno in (1044, 1045, 1698):
+            print(f"建库失败（权限不足）：{exc}")
+            print("请用管理员账号手动执行：")
+            print(
+                f"  CREATE DATABASE IF NOT EXISTS `{settings.mysql_database}` "
+                f"DEFAULT CHARACTER SET {settings.mysql_charset};"
+            )
+            print("或为本用户授权：")
+            print(
+                f"  GRANT ALL PRIVILEGES ON `{settings.mysql_database}`.* "
+                f"TO '{settings.mysql_user}'@'%';"
+            )
+            return 1
+        print(f"建库失败：{exc}")
         return 1
     finally:
         connection.close()
