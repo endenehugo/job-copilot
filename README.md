@@ -25,6 +25,16 @@ uvicorn app.main:app --reload --port 8000
 - Key 检测：`GET http://127.0.0.1:8000/api/v1/system/keycheck`
 - 接口文档：`http://127.0.0.1:8000/docs`
 
+## 前端快速启动
+
+```bash
+cd frontend
+npm install
+npm run dev   # http://localhost:5174（开发代理已指向 127.0.0.1:8018 后端）
+```
+
+生产构建：`npm run build`，产物在 `dist/`，由 Nginx 托管并反代 `/api` 与 `/conversation/image`（见 deploy/）。
+
 ## 目录结构
 
 ```text
@@ -45,4 +55,4 @@ backend/
 
 ## 开发计划与进度
 
-见 `docs/` 下的开发计划文档。当前进度：P3（求职业务 API + 架构修复）已完成，P4（Vue 前端）进行中。
+见 `docs/` 下的开发计划文档。当前进度：P4（Vue3 前端）已完成，P5（流式/部署/收尾）进行中。
