@@ -82,7 +82,10 @@ class DocumentIndexServiceTest(unittest.TestCase):
             }]
 
             with patch("app.services.document_index_service.FAISS.from_texts") as mocked_from_texts, patch.object(service, "_ensure_embeddings", return_value="embeddings"), patch.object(service, "_get_conversation_index_dir", return_value=os.path.join(parsed_dir, "index")), patch.object(service, "_chunk_text", return_value=["123"]):
-                mocked_from_texts.return_value = SimpleNamespace(save_local=lambda index_dir: None)
+                # 原子重建会先写 tmp 目录再 rename，桩 save_local 需真实创建目录
+                mocked_from_texts.return_value = SimpleNamespace(
+                    save_local=lambda index_dir: os.makedirs(index_dir, exist_ok=True)
+                )
 
                 service.rebuild_conversation_index("conv_test", documents)
 

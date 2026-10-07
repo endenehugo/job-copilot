@@ -19,11 +19,13 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class DocumentIndexService:
+    builtin_knowledge_service: Any | None = None
     _bm25_indexes: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         self.embeddings = None
         self.public_db = None
+        self._bge_reranker = None
 
     # ============================================================
     # 索引构建
@@ -31,6 +33,7 @@ class DocumentIndexService:
 
     def rebuild_conversation_index(self, conversation_id: str, documents: list[dict]) -> dict:
         index_dir = self._get_conversation_index_dir(conversation_id)
+        tmp_dir = index_dir + ".tmp"
         texts = []
         metadatas = []
 
@@ -52,15 +55,29 @@ class DocumentIndexService:
                     "original_name": document.get("original_name", ""),
                 })
 
-        if os.path.isdir(index_dir):
-            shutil.rmtree(index_dir)
+        # 先把新索引写到临时目录，构建成功后再替换旧目录。
+        # 旧版先删后建：embedding API 一失败旧索引就没了，会话检索瘫痪到重新上传。
+        if os.path.isdir(tmp_dir):
+            shutil.rmtree(tmp_dir)
 
         if not texts:
+            if os.path.isdir(index_dir):
+                shutil.rmtree(index_dir)
             os.makedirs(index_dir, exist_ok=True)
+            self._bm25_indexes.pop(conversation_id, None)
             return {"chunk_count": 0}
 
-        db = FAISS.from_texts(texts, self._ensure_embeddings(), metadatas=metadatas)
-        db.save_local(index_dir)
+        try:
+            db = FAISS.from_texts(texts, self._ensure_embeddings(), metadatas=metadatas)
+            db.save_local(tmp_dir)
+        except Exception:
+            if os.path.isdir(tmp_dir):
+                shutil.rmtree(tmp_dir)
+            raise
+
+        if os.path.isdir(index_dir):
+            shutil.rmtree(index_dir)
+        os.rename(tmp_dir, index_dir)
         # 清理缓存的 BM25 索引，重建时重新生成
         self._bm25_indexes.pop(conversation_id, None)
         return {"chunk_count": len(texts)}
@@ -103,6 +120,23 @@ class DocumentIndexService:
             if public_retriever is not None:
                 docs = public_retriever.get_relevant_documents(query)
                 source = "public"
+
+        # 第三级兜底：内置知识库（标题作为来源名，供引用展示）
+        if not docs and self.builtin_knowledge_service is not None:
+            results = self.builtin_knowledge_service.retrieve(query, k=limit)
+            if results:
+                docs = [
+                    Document(
+                        page_content=item.get("content", ""),
+                        metadata={
+                            "original_name": item.get("title") or "内置知识库",
+                            "source": "builtin_knowledge_base",
+                            "score": item.get("score"),
+                        },
+                    )
+                    for item in results
+                ]
+                source = "builtin_knowledge"
 
         return {
             "context": "\n\n".join(doc.page_content for doc in docs),
@@ -295,19 +329,25 @@ class DocumentIndexService:
         return self._rerank_with_llm(query, docs, top_k)
 
     def _rerank_with_bge(self, query: str, docs: list[Document]) -> list[Document] | None:
-        """使用 BGE Reranker 模型进行重排序（需要 FlagEmbedding 库）。"""
+        """使用 BGE Reranker 模型进行重排序（需要 FlagEmbedding 库）。
+
+        模型实例懒加载后缓存在服务实例上：旧版每次检索都重新加载一次
+        数百 MB 的模型，是检索延迟的主要浪费点。
+        """
         try:
             from FlagEmbedding import FlagReranker
-            reranker = FlagReranker("BAAI/bge-reranker-v2-m3", use_fp16=False)
+        except ImportError:
+            logger.debug("FlagEmbedding 未安装，跳过 BGE Reranker")
+            return None
+        try:
+            if self._bge_reranker is None:
+                self._bge_reranker = FlagReranker("BAAI/bge-reranker-v2-m3", use_fp16=False)
             pairs = [[query, doc.page_content] for doc in docs]
-            scores = reranker.compute_score(pairs)
+            scores = self._bge_reranker.compute_score(pairs)
             ranked = sorted(zip(docs, scores), key=lambda x: x[1], reverse=True)
             for doc, score in ranked:
                 doc.metadata["score"] = float(score)
             return [doc for doc, _ in ranked]
-        except ImportError:
-            logger.debug("FlagEmbedding 未安装，跳过 BGE Reranker")
-            return None
         except Exception as exc:
             logger.warning("BGE Reranker 调用失败: %s", exc)
             return None

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from langchain_community.chat_models import ChatTongyi
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
@@ -156,7 +159,12 @@ class ConversationChatService:
                 if tool is None:
                     content = f"工具不存在：{tool_call.get('name')}"
                 else:
-                    content = tool.invoke(tool_call.get("args"))
+                    try:
+                        content = tool.invoke(tool_call.get("args"))
+                    except Exception as exc:
+                        # 工具错误作为字符串回传给模型：保证消息序列完整，让模型自行决定下一步
+                        logger.warning("工具 %s 执行异常: %s", tool_call.get("name"), exc)
+                        content = f"工具执行失败：{exc}"
                 messages.append(ToolMessage(tool_call_id=tool_call.get("id"), content=content))
         return chain_output
 

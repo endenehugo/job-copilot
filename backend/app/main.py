@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import conversations, documents, system
+from app.api import conversations, documents, exports, interviews, jobs, knowledge, resumes, system
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.response import ok
@@ -42,6 +42,11 @@ app.include_router(system.router)
 app.include_router(conversations.router)
 app.include_router(conversations.image_router)
 app.include_router(documents.router)
+app.include_router(jobs.router)
+app.include_router(interviews.router)
+app.include_router(resumes.router)
+app.include_router(exports.router)
+app.include_router(knowledge.router)
 
 
 @app.get("/", tags=["system"])

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, Text, desc, select
+from sqlalchemy import DateTime, Float, Integer, String, Text, desc, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.repositories.mysql_base import Base
@@ -23,7 +23,7 @@ class InterviewSession(Base):
     # 面试状态: in_progress / completed
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="in_progress")
     round_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    total_score: Mapped[float | None] = mapped_column(Integer, nullable=True)
+    total_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # JSON: 初始面试题列表
     initial_questions: Mapped[str] = mapped_column(Text, nullable=False, default="[]")

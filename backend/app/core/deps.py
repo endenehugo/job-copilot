@@ -42,7 +42,8 @@ def get_document_parser_service() -> DocumentParserService:
 
 @lru_cache
 def get_document_index_service() -> DocumentIndexService:
-    return DocumentIndexService()
+    # 注入内置知识库，让"会话文档 → 公共索引 → 内置知识库"三级检索真正闭环
+    return DocumentIndexService(builtin_knowledge_service=get_builtin_knowledge_service())
 
 
 @lru_cache
