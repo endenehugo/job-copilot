@@ -1,15 +1,14 @@
 <script setup>
+import { ElMessage } from 'element-plus'
 import { notifyError } from '../../api'
 import { useInterviewStore } from '../../stores/interview'
-import { useUiStore } from '../../stores/ui'
 
 const interview = useInterviewStore()
-const ui = useUiStore()
 
 async function onStart() {
   try {
     await interview.start()
-    ui.openDrawer()
+    ElMessage.success(`面试已开始（共 ${interview.session?.total_questions ?? '?'} 题）`)
   } catch (err) {
     notifyError(err)
   }
@@ -36,7 +35,6 @@ function fmt(ts) {
       v-for="s in interview.history.slice(0, 3)"
       :key="s.session_id"
       class="history-item"
-      @click="interview.openTranscript(s.session_id).then(() => ui.openDrawer())"
     >
       <span>{{ s.direction }} · {{ fmt(s.updated_at) }}</span>
       <el-tag size="small" :type="s.status === 'completed' ? 'success' : 'info'">

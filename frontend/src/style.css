@@ -98,58 +98,6 @@ html, body, #app {
 }
 .chip:hover { border-color: var(--primary); color: var(--primary); }
 
-/* ============ 结果面板 ============ */
-.panels { overflow-y: auto; max-height: 46%; padding-bottom: 12px; }
-
-.panel {
-  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
-  margin-bottom: 12px; overflow: hidden;
-}
-.panel-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 14px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 14px;
-}
-.panel-header .actions { display: flex; gap: 4px; }
-.panel-body { padding: 14px; }
-
-.score-top { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
-.score-total { text-align: center; min-width: 110px; }
-.score-total .num { font-size: 42px; font-weight: 700; color: var(--primary); line-height: 1.1; }
-.score-total .label { font-size: 12px; color: var(--text-secondary); }
-.score-role { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
-.keywords { display: flex; flex-wrap: wrap; gap: 6px; }
-
-.score-detail { display: flex; gap: 24px; margin-top: 16px; flex-wrap: wrap; }
-.radar-box { width: 260px; height: 240px; flex-shrink: 0; }
-.dimension-list { flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 10px; justify-content: center; }
-.dimension-row .dim-head { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
-.dimension-bar-bg { height: 8px; background: #f0f2f5; border-radius: 4px; overflow: hidden; }
-.dimension-bar-fill { height: 100%; border-radius: 4px; transition: width 0.6s; }
-
-.sg-section { margin-top: 14px; }
-.sg-section .sg-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
-.sg-section ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.8; }
-
-.rewrite-block { margin-bottom: 12px; }
-.rewrite-block .block-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--primary); }
-.rewrite-block .content {
-  background: #f7f8fa; border: 1px solid var(--border); border-radius: 8px;
-  padding: 10px 12px; font-size: 13px; line-height: 1.8; white-space: pre-wrap;
-}
-
-/* ============ 面试 ============ */
-.interview-question {
-  background: #ecf5ff; border: 1px solid #d9ecff; border-radius: 8px; padding: 12px 14px;
-  font-size: 14px; line-height: 1.7; margin-bottom: 12px;
-}
-.interview-round { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; background: #fafbfc; }
-.interview-round .round-head { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
-.interview-round .evaluation { font-size: 13px; line-height: 1.7; }
-.interview-summary { background: #f0f9eb; border: 1px solid #e1f3d8; border-radius: 8px; padding: 12px 14px; font-size: 13px; line-height: 1.8; }
-
-.transcript-item { display: flex; gap: 8px; padding: 8px 0; border-bottom: 1px dashed var(--border); font-size: 13px; line-height: 1.7; }
-.transcript-item .marker { flex-shrink: 0; }
-
 /* ============ 聊天区：唯一弹性滚动区 ============ */
 .chat-wrap { position: relative; flex: 1; min-height: 0; display: flex; }
 .chatlogs { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 12px 4px 4px; }

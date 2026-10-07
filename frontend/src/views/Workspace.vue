@@ -1,12 +1,11 @@
 <script setup>
-import { computed, onMounted, watch } from 'vue'
+import { onMounted, watch } from 'vue'
 import { notifyError } from '../api'
-import { useAnalysisStore } from '../stores/analysis'
 import { useChatStore } from '../stores/chat'
 import { useConversationStore } from '../stores/conversation'
+import { useAnalysisStore } from '../stores/analysis'
 import { useInterviewStore } from '../stores/interview'
 import { useResumeStore } from '../stores/resume'
-import { useUiStore } from '../stores/ui'
 
 import ConversationList from '../components/sidebar/ConversationList.vue'
 import DocumentPanel from '../components/sidebar/DocumentPanel.vue'
@@ -17,16 +16,12 @@ import KnowledgePanel from '../components/sidebar/KnowledgePanel.vue'
 
 import MessageList from '../components/chat/MessageList.vue'
 import Composer from '../components/chat/Composer.vue'
-import ScoreCard from '../components/panels/ScoreCard.vue'
-import ProjectRewriteCard from '../components/panels/ProjectRewriteCard.vue'
-import InterviewSession from '../components/panels/InterviewSession.vue'
 
 const conv = useConversationStore()
 const chat = useChatStore()
 const analysis = useAnalysisStore()
 const interview = useInterviewStore()
 const resume = useResumeStore()
-const ui = useUiStore()
 
 const CHIPS = [
   '这份文档主要介绍了什么？',
@@ -35,11 +30,7 @@ const CHIPS = [
   '模拟面试一般会问哪些项目深挖问题？',
 ]
 
-const hasPanels = computed(
-  () => !!(analysis.analysis || analysis.rewrite || interview.session || interview.transcript)
-)
-
-// 切换会话后：聊天从 detail 回放，其余各模块按会话维度刷新（不自动弹抽屉）
+// 切换会话后：聊天从 detail 回放，其余各模块按会话维度刷新
 watch(
   () => conv.detail,
   (detail) => chat.loadFromDetail(detail)
@@ -99,12 +90,7 @@ function sendChip(text) {
     <main class="workspace">
       <header class="topbar">
         <span class="title">{{ conv.current?.title || 'Job Copilot' }}</span>
-        <div style="display: flex; gap: 8px; align-items: center">
-          <el-button size="small" :type="ui.analysisDrawerOpen ? 'primary' : 'default'" @click="ui.toggleDrawer()">
-            📊 分析面板
-          </el-button>
-          <span class="badge">FastAPI + Vue3 · LLM + RAG</span>
-        </div>
+        <span class="badge">FastAPI + Vue3 · LLM + RAG</span>
       </header>
 
       <div class="main-area">
@@ -121,21 +107,5 @@ function sendChip(text) {
         <Composer />
       </div>
     </main>
-
-    <!-- 分析结果统一在右侧抽屉展示，聊天区保持纯净流 -->
-    <el-drawer v-model="ui.analysisDrawerOpen" title="📊 分析面板" direction="rtl" size="520px">
-      <div class="drawer-panels">
-        <ScoreCard v-if="analysis.analysis" />
-        <ProjectRewriteCard v-if="analysis.rewrite" />
-        <InterviewSession v-if="interview.session || interview.transcript" />
-        <div
-          v-if="!hasPanels"
-          class="hint"
-          style="text-align: center; padding: 40px 0"
-        >
-          暂无分析结果。可通过左侧「JD 分析 / 项目优化 / 模拟面试」发起。
-        </div>
-      </div>
-    </el-drawer>
   </div>
 </template>
