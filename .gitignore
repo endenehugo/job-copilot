@@ -28,3 +28,4 @@ backend/resources/chat_history.json
 # 日志与临时文件
 *.log
 *.tmp
+p2_tmp/

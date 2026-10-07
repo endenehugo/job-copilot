@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import system
+from app.api import conversations, documents, system
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.response import ok
@@ -39,6 +39,9 @@ app.add_middleware(
 
 register_exception_handlers(app)
 app.include_router(system.router)
+app.include_router(conversations.router)
+app.include_router(conversations.image_router)
+app.include_router(documents.router)
 
 
 @app.get("/", tags=["system"])
