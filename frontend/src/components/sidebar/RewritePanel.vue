@@ -2,12 +2,15 @@
 import { ElMessage } from 'element-plus'
 import { notifyError } from '../../api'
 import { useAnalysisStore } from '../../stores/analysis'
+import { useUiStore } from '../../stores/ui'
 
 const analysis = useAnalysisStore()
+const ui = useUiStore()
 
 async function onRewrite() {
   try {
     await analysis.rewrite()
+    ui.openDrawer()
     ElMessage.success('优化完成')
   } catch (err) {
     notifyError(err)

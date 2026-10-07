@@ -1,11 +1,12 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { notifyError } from '../api'
 import { useAnalysisStore } from '../stores/analysis'
 import { useChatStore } from '../stores/chat'
 import { useConversationStore } from '../stores/conversation'
 import { useInterviewStore } from '../stores/interview'
 import { useResumeStore } from '../stores/resume'
+import { useUiStore } from '../stores/ui'
 
 import ConversationList from '../components/sidebar/ConversationList.vue'
 import DocumentPanel from '../components/sidebar/DocumentPanel.vue'
@@ -25,6 +26,7 @@ const chat = useChatStore()
 const analysis = useAnalysisStore()
 const interview = useInterviewStore()
 const resume = useResumeStore()
+const ui = useUiStore()
 
 const CHIPS = [
   '这份文档主要介绍了什么？',
@@ -36,9 +38,8 @@ const CHIPS = [
 const hasPanels = computed(
   () => !!(analysis.analysis || analysis.rewrite || interview.session || interview.transcript)
 )
-const panelsCollapsed = ref(false)
 
-// 切换会话后：聊天从 detail 回放，其余各模块按会话维度刷新
+// 切换会话后：聊天从 detail 回放，其余各模块按会话维度刷新（不自动弹抽屉）
 watch(
   () => conv.detail,
   (detail) => chat.loadFromDetail(detail)
@@ -61,7 +62,7 @@ onMounted(async () => {
 })
 
 function sendChip(text) {
-  chat.send(text)
+  chat.sendStream(text)
 }
 </script>
 
@@ -98,25 +99,18 @@ function sendChip(text) {
     <main class="workspace">
       <header class="topbar">
         <span class="title">{{ conv.current?.title || 'Job Copilot' }}</span>
-        <span class="badge">FastAPI + Vue3 · LLM + RAG</span>
+        <div style="display: flex; gap: 8px; align-items: center">
+          <el-button size="small" :type="ui.analysisDrawerOpen ? 'primary' : 'default'" @click="ui.toggleDrawer()">
+            📊 分析面板
+          </el-button>
+          <span class="badge">FastAPI + Vue3 · LLM + RAG</span>
+        </div>
       </header>
 
       <div class="main-area">
-        <section v-if="hasPanels" class="panels-zone">
-          <div class="panels-bar">
-            <span class="hint">分析面板（JD 报告 / 项目优化 / 模拟面试）</span>
-            <el-button size="small" text @click="panelsCollapsed = !panelsCollapsed">
-              {{ panelsCollapsed ? '展开面板 ▾' : '收起面板 ▴' }}
-            </el-button>
-          </div>
-          <section v-show="!panelsCollapsed" class="panels">
-            <ScoreCard v-if="analysis.analysis" />
-            <ProjectRewriteCard v-if="analysis.rewrite" />
-            <InterviewSession v-if="interview.session || interview.transcript" />
-          </section>
-        </section>
+        <MessageList v-if="chat.messages.length" />
 
-        <section v-if="!chat.messages.length && !hasPanels" class="welcome">
+        <section v-if="!chat.messages.length" class="welcome">
           <h2>欢迎使用 Job Copilot</h2>
           <p>上传简历 → 输入 JD → 查看匹配评分 → 优化项目 → 模拟面试</p>
           <div class="chips">
@@ -124,10 +118,24 @@ function sendChip(text) {
           </div>
         </section>
 
-        <MessageList v-if="chat.messages.length" />
-
         <Composer />
       </div>
     </main>
+
+    <!-- 分析结果统一在右侧抽屉展示，聊天区保持纯净流 -->
+    <el-drawer v-model="ui.analysisDrawerOpen" title="📊 分析面板" direction="rtl" size="520px">
+      <div class="drawer-panels">
+        <ScoreCard v-if="analysis.analysis" />
+        <ProjectRewriteCard v-if="analysis.rewrite" />
+        <InterviewSession v-if="interview.session || interview.transcript" />
+        <div
+          v-if="!hasPanels"
+          class="hint"
+          style="text-align: center; padding: 40px 0"
+        >
+          暂无分析结果。可通过左侧「JD 分析 / 项目优化 / 模拟面试」发起。
+        </div>
+      </div>
+    </el-drawer>
   </div>
 </template>

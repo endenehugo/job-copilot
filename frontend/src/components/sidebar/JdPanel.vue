@@ -5,15 +5,18 @@ import { notifyError } from '../../api'
 import { useAnalysisStore } from '../../stores/analysis'
 import { useChatStore } from '../../stores/chat'
 import { useConversationStore } from '../../stores/conversation'
+import { useUiStore } from '../../stores/ui'
 
 const analysis = useAnalysisStore()
 const chat = useChatStore()
 const conv = useConversationStore()
+const ui = useUiStore()
 const shotInput = ref(null)
 
 async function onAnalyze() {
   try {
     await analysis.analyze()
+    ui.openDrawer()
     ElMessage.success('分析完成')
   } catch (err) {
     notifyError(err)
@@ -37,6 +40,7 @@ async function onShotChange(e) {
     const imageUrl = chat.pendingImages[chat.pendingImages.length - 1].url
     await analysis.analyzeScreenshot(imageUrl)
     chat.pendingImages = []
+    ui.openDrawer()
     ElMessage.success('截图分析完成')
   } catch (err) {
     notifyError(err)
