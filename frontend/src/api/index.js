@@ -7,7 +7,9 @@ export const conversationApi = {
   list: (limit = 50) => client.get('/conversation/list', { params: { limit } }),
   detail: (id) => client.get('/conversation/detail', { params: { conversation_id: id } }),
   chat: (data) => client.post('/conversation/chat', data),
+  chatStream: (data) => client.post('/conversation/chat/stream', data),
   uploadImage: (formData) => client.post('/conversation/image/upload', formData),
+  remove: (conversationId) => client.post('/conversation/delete', { conversation_id: conversationId }),
 }
 
 export const documentApi = {

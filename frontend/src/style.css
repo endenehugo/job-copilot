@@ -55,6 +55,16 @@ html, body, #app {
 .conversation-item .title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .conversation-item .preview { font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
 
+.context-menu {
+  position: fixed; z-index: 3000; min-width: 132px;
+  background: #fff; border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.14); padding: 4px;
+}
+.context-menu-item { padding: 8px 12px; font-size: 13px; border-radius: 6px; cursor: pointer; }
+.context-menu-item:hover { background: #f0f2f5; }
+.context-menu-item.danger { color: #f56c6c; }
+.context-menu-item.danger:hover { background: #fef0f0; }
+
 .doc-item {
   display: flex; align-items: center; gap: 6px;
   padding: 6px 8px; border-radius: 6px; font-size: 13px; margin-bottom: 4px; background: #fff;

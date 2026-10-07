@@ -20,9 +20,13 @@ from fastapi import APIRouter, File, Form, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
 from app.core.config import settings
-from app.core.deps import get_conversation_chat_service, get_conversation_store_service
+from app.core.deps import (
+    get_conversation_chat_service,
+    get_conversation_store_service,
+    get_document_index_service,
+)
 from app.core.response import fail, ok
-from app.schemas.conversation import ChatRequest, CreateConversationRequest
+from app.schemas.conversation import ChatRequest, CreateConversationRequest, DeleteConversationRequest
 from app.utils import ResourceUtils
 
 logger = logging.getLogger(__name__)
@@ -114,6 +118,29 @@ def conversation_chat_stream(payload: ChatRequest):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/conversation/delete")
+def delete_conversation(payload: DeleteConversationRequest) -> dict:
+    """删除会话：单事务级联清理全部关联数据，事务成功后清理文件与向量索引。"""
+    import shutil
+
+    conversation_id = payload.conversation_id.strip()
+    if not conversation_id:
+        return fail("conversation_id 参数不能为空", code=400)
+
+    result = get_conversation_store_service().delete_conversation(conversation_id)
+
+    for rel in (
+        os.path.join("uploads", conversation_id),
+        os.path.join("parsed_docs", conversation_id),
+        os.path.join("faiss_index_uploads", conversation_id),
+        os.path.join("uploads", "images", conversation_id),
+    ):
+        shutil.rmtree(ResourceUtils.get_resource_path(rel), ignore_errors=True)
+    get_document_index_service().delete_conversation_index(conversation_id)
+
+    return ok(result, message="删除成功")
 
 
 @router.post("/conversation/image/upload")

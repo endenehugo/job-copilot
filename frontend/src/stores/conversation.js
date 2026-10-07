@@ -38,5 +38,14 @@ export const useConversationStore = defineStore('conversation', {
     async refreshDetail() {
       if (this.currentId) await this.select(this.currentId)
     },
+    async remove(cid) {
+      await conversationApi.remove(cid)
+      await this.loadList()
+      // 删除的是当前会话：清空主区（Workspace 的 watch 会联动清空各模块）
+      if (cid === this.currentId) {
+        this.currentId = ''
+        this.detail = null
+      }
+    },
   },
 })

@@ -15,3 +15,7 @@ class ChatRequest(BaseModel):
     query: str = ""
     mode: str = "agent"
     image_urls: list[str] = []
+
+
+class DeleteConversationRequest(BaseModel):
+    conversation_id: str = ""

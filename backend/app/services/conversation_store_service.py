@@ -5,7 +5,19 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from app.repositories import DatabaseManager, ConversationRepository, MessageRepository, DocumentRepository
+from app.repositories import (
+    DatabaseManager,
+    ConversationDocument,
+    ConversationMessage,
+    ConversationRepository,
+    InterviewMessage,
+    InterviewSession,
+    InterviewSessionRepository,
+    JobAnalysis,
+    MessageRepository,
+    DocumentRepository,
+    ResumeVersion,
+)
 
 
 @dataclass
@@ -224,6 +236,46 @@ class ConversationStoreService:
             "created_at": item.created_at.isoformat(),
             "updated_at": item.updated_at.isoformat(),
         }
+
+    def delete_conversation(self, conversation_id: str) -> dict:
+        """删除会话及全部关联数据（消息/文档/评分/简历版本/面试会话与问答）。
+
+        单事务级联删除；文件与向量索引由路由层在事务成功后清理。
+        """
+        from sqlalchemy import delete as sql_delete
+
+        session = self.database_manager.get_session()
+        try:
+            with session.begin():
+                conversation = self.conversation_repository.get_by_conversation_id(session, conversation_id)
+                if conversation is None:
+                    raise ValueError("会话不存在")
+
+                session_ids = [
+                    s.session_id
+                    for s in InterviewSessionRepository.list_by_conversation_id(
+                        session, conversation_id, limit=1000
+                    )
+                ]
+                if session_ids:
+                    session.execute(
+                        sql_delete(InterviewMessage).where(InterviewMessage.session_id.in_(session_ids))
+                    )
+                    session.execute(
+                        sql_delete(InterviewSession).where(InterviewSession.conversation_id == conversation_id)
+                    )
+                session.execute(sql_delete(JobAnalysis).where(JobAnalysis.conversation_id == conversation_id))
+                session.execute(sql_delete(ResumeVersion).where(ResumeVersion.conversation_id == conversation_id))
+                session.execute(
+                    sql_delete(ConversationMessage).where(ConversationMessage.conversation_id == conversation_id)
+                )
+                session.execute(
+                    sql_delete(ConversationDocument).where(ConversationDocument.conversation_id == conversation_id)
+                )
+                session.delete(conversation)
+        finally:
+            session.close()
+        return {"conversation_id": conversation_id}
 
     @classmethod
     def _strip_image_markdown(cls, content: str) -> str:
