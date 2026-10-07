@@ -44,6 +44,11 @@ export const knowledgeApi = {
   query: (query, k = 4) => client.get('/knowledge/query', { params: { query, k } }),
   categories: () => client.get('/knowledge/categories'),
   status: () => client.get('/knowledge/status'),
+  submit: (content) => client.post('/knowledge/entries', { content }),
+  listEntries: (status = 'approved', limit = 50) =>
+    client.get('/knowledge/entries', { params: { status, limit } }),
+  removeEntry: (entryId) => client.delete(`/knowledge/entries/${entryId}`),
+  selfExpand: (count = 3) => client.post('/knowledge/self-expand', { count }),
 }
 
 export const exportApi = {

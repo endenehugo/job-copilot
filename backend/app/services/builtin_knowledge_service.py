@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass
+from datetime import datetime
 
 from langchain_community.embeddings import dashscope
 from langchain_community.vectorstores import FAISS
 
+from app.repositories import DatabaseManager
+from app.repositories.knowledge_entry_repository import KnowledgeEntryRepository
+from app.services.knowledge_review_service import KnowledgeReviewService
 from app.utils import ResourceUtils
 
 logger = logging.getLogger(__name__)
@@ -364,12 +369,31 @@ class BuiltinKnowledgeService:
     _db: FAISS | None = None
     _embeddings = None
 
+    def _all_corpus(self) -> list[dict]:
+        """全量知识语料 = 内置 23 条 + 数据库中审核通过的自定义条目。"""
+        items = [
+            {
+                "title": item.get("title", ""),
+                "category": item.get("category", ""),
+                "content": item.get("content", "").strip(),
+            }
+            for item in BUILTIN_KNOWLEDGE
+        ]
+        session = DatabaseManager.get_session()
+        try:
+            rows = KnowledgeEntryRepository.list_by_status(session, "approved", limit=500)
+        finally:
+            DatabaseManager.remove_session()
+        for row in rows:
+            items.append({"title": row.title, "category": row.category, "content": row.content})
+        return [item for item in items if item["content"]]
+
     def rebuild_index(self) -> dict:
-        """从内置知识数据重建 FAISS 索引"""
+        """从全量语料（内置 + 审核通过的自定义条目）重建 FAISS 索引"""
         texts = []
         metadatas = []
 
-        for item in BUILTIN_KNOWLEDGE:
+        for item in self._all_corpus():
             title = item.get("title", "")
             category = item.get("category", "")
             content = item.get("content", "").strip()
@@ -396,6 +420,155 @@ class BuiltinKnowledgeService:
 
         logger.info("Built-in knowledge index rebuilt: %d chunks", len(texts))
         return {"chunk_count": len(texts)}
+
+    def add_entry(self, content: str, source: str = "user") -> dict:
+        """提交内容 → AI 审核 → 通过则入库并增量更新索引。
+
+        fail-closed：AI 审核不可用或判定不相关/重复时，内容不入检索索引
+        （拒绝结果仍落库留审计痕迹）。
+        """
+        content = (content or "").strip()
+        if not content:
+            raise ValueError("内容不能为空")
+        if len(content) > 4000:
+            raise ValueError("内容过长（上限 4000 字符），请拆分后提交")
+
+        existing_titles = [item["title"] for item in self._all_corpus() if item["title"]]
+        review = KnowledgeReviewService().review(content, existing_titles)
+
+        approved = bool(review["related"]) and not bool(review["duplicate"])
+        entry_id = f"ke_{uuid.uuid4().hex[:16]}"
+        title = review["title"] or content[:20]
+        self._persist_entry(
+            entry_id=entry_id,
+            title=title,
+            category=review["category"],
+            content=content,
+            source=source,
+            status="approved" if approved else "rejected",
+            review_reason=review["reason"],
+        )
+
+        result = {"approved": approved, "review": review, "entry_id": entry_id}
+        if approved:
+            entry = {"title": title, "category": review["category"], "content": content}
+            self._append_to_index(entry)
+            result["entry"] = entry
+        return result
+
+    def self_expand(self, count: int = 3) -> dict:
+        """AI 自主扩充：生成候选 → 每条候选仍经 AI 审核 → 通过才入库。
+
+        生成者与审核者分离：generate 只产候选，入库必须走同一条 review 链。
+        """
+        count = max(1, min(5, int(count or 3)))
+        existing_titles = [item["title"] for item in self._all_corpus() if item["title"]]
+        candidates = KnowledgeReviewService().generate_candidates(existing_titles, count)
+
+        added, rejected = [], []
+        for candidate in candidates:
+            try:
+                result = self.add_entry(candidate["content"], source="ai")
+            except ValueError as exc:
+                rejected.append({"title": candidate["title"], "reason": str(exc)})
+                continue
+            item = {
+                "title": result["review"]["title"] or candidate["title"],
+                "category": result["review"]["category"],
+                "reason": result["review"]["reason"],
+            }
+            if result["approved"]:
+                added.append(item)
+            else:
+                rejected.append(item)
+        return {"added": added, "rejected": rejected}
+
+    def list_entries(self, status: str = "approved", limit: int = 100) -> list[dict]:
+        if status not in ("approved", "rejected"):
+            raise ValueError("status 仅支持 approved / rejected")
+        session = DatabaseManager.get_session()
+        try:
+            rows = KnowledgeEntryRepository.list_by_status(session, status, limit=limit)
+            return [
+                {
+                    "entry_id": row.entry_id,
+                    "title": row.title,
+                    "category": row.category,
+                    "content": row.content,
+                    "source": row.source,
+                    "status": row.status,
+                    "review_reason": row.review_reason,
+                    "created_at": row.created_at.isoformat() if row.created_at else "",
+                }
+                for row in rows
+            ]
+        finally:
+            DatabaseManager.remove_session()
+
+    def remove_entry(self, entry_id: str) -> None:
+        session = DatabaseManager.get_session()
+        try:
+            entity = KnowledgeEntryRepository.get_by_entry_id(session, entry_id)
+            if entity is None:
+                raise ValueError("条目不存在")
+            with session.begin():
+                KnowledgeEntryRepository.delete(session, entity)
+        finally:
+            DatabaseManager.remove_session()
+        self.rebuild_index()
+
+    def corpus_stats(self) -> dict:
+        corpus = self._all_corpus()
+        categories: dict = {}
+        for item in corpus:
+            cat = item.get("category") or "general"
+            categories[cat] = categories.get(cat, 0) + 1
+        return {"total": len(corpus), "categories": categories}
+
+    def _persist_entry(
+        self,
+        entry_id: str,
+        title: str,
+        category: str,
+        content: str,
+        source: str,
+        status: str,
+        review_reason: str,
+    ) -> None:
+        session = DatabaseManager.get_session()
+        try:
+            with session.begin():
+                KnowledgeEntryRepository.create(
+                    session,
+                    entry_id=entry_id,
+                    title=title,
+                    category=category,
+                    content=content,
+                    source=source,
+                    status=status,
+                    review_reason=review_reason,
+                    created_at=datetime.now(),
+                )
+        finally:
+            DatabaseManager.remove_session()
+
+    def _append_to_index(self, entry: dict) -> None:
+        """增量追加：新条目向量化并入现有索引（避免整库重嵌入）。"""
+        db = self._load_db()
+        if db is None:
+            self.rebuild_index()
+            return
+        text = f"标题：{entry['title']}\n分类：{entry['category']}\n\n{entry['content']}"
+        db.add_texts(
+            [text],
+            metadatas=[{
+                "title": entry["title"],
+                "category": entry["category"],
+                "source": "builtin_knowledge_base",
+            }],
+        )
+        db.save_local(self._get_index_dir())
+        self._db = db
 
     def retrieve(self, query: str, k: int = 3, category: str | None = None) -> list[dict]:
         """检索内置知识库"""

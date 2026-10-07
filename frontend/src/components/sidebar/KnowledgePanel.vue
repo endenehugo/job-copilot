@@ -24,6 +24,28 @@ async function onSearch() {
     notifyError(err)
   }
 }
+
+async function onSubmit() {
+  try {
+    await kb.submitContent()
+    if (kb.reviewResult?.approved) {
+      ElMessage.success('AI 审核通过，已入库')
+    }
+  } catch (err) {
+    notifyError(err)
+  }
+}
+
+async function onExpand() {
+  try {
+    await kb.selfExpand()
+    ElMessage.success(
+      `AI 扩充完成：新增 ${kb.expandResult?.added.length ?? 0} 条，驳回 ${kb.expandResult?.rejected.length ?? 0} 条`
+    )
+  } catch (err) {
+    notifyError(err)
+  }
+}
 </script>
 
 <template>
@@ -34,6 +56,7 @@ async function onSearch() {
         {{ kb.status.index_exists ? `已建索引 · ${kb.status.total_documents} 条` : '未建索引' }}
       </span>
     </div>
+
     <div style="display: flex; gap: 6px">
       <el-input v-model="kb.query" size="small" placeholder="搜索面试知识…" @keyup.enter="onSearch" />
       <el-button size="small" type="primary" :loading="kb.searching" @click="onSearch">搜索</el-button>
@@ -44,6 +67,41 @@ async function onSearch() {
         <span class="kb-cat">{{ r.category }}</span>
       </div>
       <div class="kb-content">{{ r.content.slice(0, 120) }}…</div>
+    </div>
+
+    <el-divider style="margin: 10px 0" />
+
+    <div class="hint" style="margin-bottom: 6px">知识库自主更新（AI 审核通过才入库）</div>
+    <el-input
+      v-model="kb.newContent"
+      type="textarea"
+      :rows="3"
+      size="small"
+      placeholder="粘贴面试题、八股或工程要点… AI 会判断是否为面试相关内容"
+    />
+    <div style="display: flex; gap: 8px; margin-top: 6px">
+      <el-button size="small" type="primary" :loading="kb.submitting" @click="onSubmit">提交 AI 审核</el-button>
+      <el-button size="small" :loading="kb.expanding" @click="onExpand">AI 自主扩充</el-button>
+    </div>
+
+    <div v-if="kb.reviewResult" class="kb-result">
+      <div class="kb-title">
+        {{ kb.reviewResult.approved ? '✅ 审核通过，已入库' : '❌ 未通过审核' }}
+        <span v-if="kb.reviewResult.approved" class="kb-cat">{{ kb.reviewResult.review?.category }}</span>
+      </div>
+      <div class="kb-content">{{ kb.reviewResult.review?.reason }}</div>
+    </div>
+
+    <div v-if="kb.expandResult" class="kb-result">
+      <div class="kb-title">
+        AI 扩充：新增 {{ kb.expandResult.added.length }} 条 / 驳回 {{ kb.expandResult.rejected.length }} 条
+      </div>
+      <div v-for="(a, i) in kb.expandResult.added" :key="'a' + i" class="kb-content">
+        ✅ {{ a.title }}（{{ a.category }}）
+      </div>
+      <div v-for="(r, i) in kb.expandResult.rejected" :key="'r' + i" class="kb-content">
+        ❌ {{ r.title }}：{{ r.reason }}
+      </div>
     </div>
   </div>
 </template>

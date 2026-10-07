@@ -8,6 +8,11 @@ export const useKnowledgeStore = defineStore('knowledge', {
     searching: false,
     rebuilding: false,
     status: null,
+    newContent: '',
+    submitting: false,
+    reviewResult: null, // {approved, review, entry_id}
+    expanding: false,
+    expandResult: null, // {added, rejected}
   }),
   actions: {
     async loadStatus() {
@@ -35,6 +40,28 @@ export const useKnowledgeStore = defineStore('knowledge', {
         this.results = res.data.results
       } finally {
         this.searching = false
+      }
+    },
+    async submitContent() {
+      if (!this.newContent.trim()) throw new Error('请输入要贡献的内容')
+      this.submitting = true
+      try {
+        const res = await knowledgeApi.submit(this.newContent)
+        this.reviewResult = { approved: res.data.approved, review: res.data.review }
+        if (res.data.approved) this.newContent = ''
+        await this.loadStatus()
+      } finally {
+        this.submitting = false
+      }
+    },
+    async selfExpand() {
+      this.expanding = true
+      try {
+        const res = await knowledgeApi.selfExpand(3)
+        this.expandResult = res.data
+        await this.loadStatus()
+      } finally {
+        this.expanding = false
       }
     },
   },
