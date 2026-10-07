@@ -40,20 +40,19 @@ class ConversationChatService:
         self.agent_prompt = None
         self.multimodal_system_prompt = None
 
-    def chat(self, conversation_id: str, query: str, mode: str = "agent", image_urls: list[str] | None = None) -> dict:
+    def _prepare_chat(self, conversation_id, query, mode, image_urls):
+        """公共前置流程：模式归一、历史压缩、上下文检索、用户消息组装。"""
         normalized_mode = mode if mode in {"agent", "rag", "memory"} else "agent"
         effective_query = (query or "").strip() or "请描述图片内容。"
         normalized_image_urls = [item for item in (image_urls or []) if item]
         self.conversation_store_service.ensure_conversation_exists(conversation_id)
         self._ensure_initialized()
 
-        # 1. 获取对话历史并进行上下文压缩
         history = self.conversation_store_service.get_conversation_messages(conversation_id)
         compressed_history = self.context_compression_service.compress_history(
             history, max_messages=self._MAX_HISTORY_MESSAGES
         )
 
-        # 2. 检索上下文（含混合检索，返回详细来源）
         if normalized_mode == "memory":
             context = ""
             source_docs = []
@@ -65,6 +64,26 @@ class ConversationChatService:
             source_docs = context_result["documents"]
 
         user_content = self._compose_user_content(effective_query, normalized_image_urls)
+        return (
+            normalized_mode,
+            effective_query,
+            normalized_image_urls,
+            compressed_history,
+            context,
+            source_docs,
+            user_content,
+        )
+
+    def chat(self, conversation_id: str, query: str, mode: str = "agent", image_urls: list[str] | None = None) -> dict:
+        (
+            normalized_mode,
+            effective_query,
+            normalized_image_urls,
+            compressed_history,
+            context,
+            source_docs,
+            user_content,
+        ) = self._prepare_chat(conversation_id, query, mode, image_urls)
 
         # 3. 生成回答
         if normalized_image_urls:
@@ -108,6 +127,117 @@ class ConversationChatService:
             "verification": verification_result,
             "sources": source_docs,
         }
+
+    def chat_stream(self, conversation_id: str, query: str, mode: str = "agent", image_urls: list[str] | None = None):
+        """流式问答生成器，产出 SSE 事件：meta -> delta* -> sources -> verification -> done。
+
+        流式策略：
+        - 首轮流式（bind_tools 状态下模型请求工具时通常无文本输出，delta 为空不影响前端）；
+        - 首轮即给出答案（绝大多数请求）：token 级流式；
+        - 命中工具：工具轮与最终回答走非流式，最终回答整段下发一次；
+        - 多模态：整段下发；
+        - 校验与引用标注依赖完整回答，在 done 前一次性下发。
+        """
+        (
+            normalized_mode,
+            effective_query,
+            normalized_image_urls,
+            compressed_history,
+            context,
+            source_docs,
+            user_content,
+        ) = self._prepare_chat(conversation_id, query, mode, image_urls)
+
+        yield {"event": "meta", "data": {"conversation_id": conversation_id, "mode": normalized_mode}}
+
+        if normalized_image_urls:
+            answer = self._invoke_multimodal(compressed_history, context, effective_query, normalized_image_urls)
+            if answer:
+                yield {"event": "delta", "data": {"text": answer}}
+        else:
+            prompt = self.agent_prompt if normalized_mode == "agent" else self.qa_prompt
+            prompt_messages = prompt.invoke({
+                "query": effective_query,
+                "history": self._build_history(compressed_history),
+                "context": context,
+            }).to_messages()
+
+            if normalized_mode == "agent":
+                streamed_text = ""
+                merged = None
+                try:
+                    for chunk in self.agent_llm.stream(prompt_messages):
+                        merged = chunk if merged is None else merged + chunk
+                        if chunk.content:
+                            streamed_text += chunk.content
+                            yield {"event": "delta", "data": {"text": chunk.content}}
+                except Exception as exc:
+                    logger.warning("流式生成异常: %s", exc)
+
+                if merged is not None and merged.tool_calls:
+                    messages = list(prompt_messages)
+                    messages.append(AIMessage(content=merged.content or "", tool_calls=list(merged.tool_calls)))
+                    final_answer = self._run_tool_rounds(messages)
+                    answer = final_answer or streamed_text
+                    if final_answer:
+                        yield {"event": "delta", "data": {"text": final_answer}}
+                else:
+                    answer = streamed_text
+            else:
+                answer = self.qa_llm.invoke(prompt_messages).content
+                if answer:
+                    yield {"event": "delta", "data": {"text": answer}}
+
+        answer = answer or "抱歉，我暂时无法生成回答。"
+
+        verification_result = None
+        cited_answer = answer
+        if context and normalized_mode != "memory":
+            try:
+                verify_report = self.context_verification_service.generate_verification_report(
+                    answer, context, source_docs
+                )
+                verification_result = verify_report["verification"]
+                cited_answer = verify_report["cited_answer"]
+            except Exception as exc:
+                logger.warning("上下文验证异常，跳过: %s", exc)
+
+        # 与非流式一致：持久化原始回答（不含引用标记）
+        self.conversation_store_service.append_message_pair(conversation_id, user_content, answer, normalized_mode)
+        detail = self.conversation_store_service.get_conversation_detail(conversation_id)
+
+        yield {"event": "sources", "data": {"sources": source_docs}}
+        yield {"event": "verification", "data": {"verification": verification_result}}
+        yield {
+            "event": "done",
+            "data": {
+                "answer": cited_answer,
+                "original_answer": answer,
+                "conversation": detail,
+            },
+        }
+
+    def _run_tool_rounds(self, messages: list) -> str:
+        """首轮流式命中工具调用后，继续执行工具轮并返回最终回答（非流式）。"""
+        for _ in range(3):
+            response = self.agent_llm.invoke(messages)
+            messages.append(response)
+            tool_calls = response.tool_calls or []
+            if not tool_calls:
+                return response.content
+
+            for tool_call in tool_calls:
+                tool = self.tool_dic.get(tool_call.get("name"))
+                if tool is None:
+                    content = f"工具不存在：{tool_call.get('name')}"
+                else:
+                    try:
+                        content = tool.invoke(tool_call.get("args"))
+                    except Exception as exc:
+                        logger.warning("工具 %s 执行异常: %s", tool_call.get("name"), exc)
+                        content = f"工具执行失败：{exc}"
+                messages.append(ToolMessage(tool_call_id=tool_call.get("id"), content=content))
+        return ""
 
     def _ensure_initialized(self):
         if self.qa_llm is not None:

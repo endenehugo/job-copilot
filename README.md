@@ -35,6 +35,21 @@ npm run dev   # http://localhost:5174（开发代理已指向 127.0.0.1:8018 后
 
 生产构建：`npm run build`，产物在 `dist/`，由 Nginx 托管并反代 `/api` 与 `/conversation/image`（见 deploy/）。
 
+## 聊天流式输出
+
+`POST /api/v1/conversation/chat/stream`（SSE）：事件序列 `meta → delta* → sources → verification → done`。
+未命中工具的请求逐 token 推送；命中工具时工具轮非流式、最终回答整段下发；
+校验与引用标注依赖完整回答，在 done 前一次性返回。前端 fetch ReadableStream 渲染打字机效果。
+
+## 部署
+
+两条路线（详见 `deploy/部署指南.md`）：
+
+- **Docker**：`cp .env.example .env`（补齐密钥与 MySQL 密码）→ `docker compose -f deploy/docker-compose.yml up -d --build`，一键拉起 mysql + backend + nginx(frontend)。
+- **手工**：uvicorn + systemd + Nginx（阿里云 Ubuntu 实测路线）。
+
+部署要点：Nginx 对 `/api/v1/conversation/chat/stream` 必须 `proxy_buffering off`；后端保持 `workers=1`（进程内缓存语义）；生产依赖已最小化，无 torch/OpenMP 冲突。
+
 ## 目录结构
 
 ```text
@@ -55,4 +70,4 @@ backend/
 
 ## 开发计划与进度
 
-见 `docs/` 下的开发计划文档。当前进度：P4（Vue3 前端）已完成，P5（流式/部署/收尾）进行中。
+见 `docs/` 下的开发计划文档。当前进度：P5（流式/部署/收尾）已完成，全部五个阶段交付。

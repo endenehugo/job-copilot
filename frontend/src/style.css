@@ -169,6 +169,9 @@ html, body, #app {
 
 .cite-ref { color: var(--primary); font-weight: 600; cursor: default; margin: 0 1px; font-size: 11px; }
 
+.stream-cursor { color: var(--primary); animation: blink 1s step-start infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
 .source-panel { margin-top: 10px; border-top: 1px dashed var(--border); padding-top: 8px; }
 .source-toggle { font-size: 12px; color: var(--primary); cursor: pointer; user-select: none; }
 .risk-badge { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 10px; margin-left: 8px; }

@@ -11,7 +11,7 @@ const html = computed(() => renderMarkdown(props.message.content))
   <div class="message" :class="message.role">
     <div class="avatar">{{ message.role === 'user' ? '我' : 'AI' }}</div>
     <div class="bubble">
-      <div v-html="html"></div>
+      <div v-html="html"></div><span v-if="message.streaming" class="stream-cursor">▍</span>
       <SourcePanel
         v-if="message.role === 'assistant'"
         :sources="message.sources"

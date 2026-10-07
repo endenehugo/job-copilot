@@ -18,7 +18,7 @@ async function send() {
   }
   text.value = ''
   try {
-    await chat.send(query)
+    await chat.sendStream(query)
   } catch (err) {
     notifyError(err)
   }

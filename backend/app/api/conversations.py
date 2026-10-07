@@ -9,19 +9,23 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 import re
 import shutil
 import uuid
 
 from fastapi import APIRouter, File, Form, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from app.core.config import settings
 from app.core.deps import get_conversation_chat_service, get_conversation_store_service
 from app.core.response import fail, ok
 from app.schemas.conversation import ChatRequest, CreateConversationRequest
 from app.utils import ResourceUtils
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1")
 image_router = APIRouter()
@@ -72,6 +76,44 @@ def conversation_chat(payload: ChatRequest) -> dict:
     )
     # 旧契约：信封 message 携带回答文本，data 携带完整结果
     return ok(result, message=result["answer"])
+
+
+@router.post("/conversation/chat/stream")
+def conversation_chat_stream(payload: ChatRequest):
+    """SSE 流式问答：meta -> delta* -> sources -> verification -> done。"""
+    conversation_id = payload.conversation_id.strip()
+    query = payload.query.strip()
+    image_urls = [item.strip() for item in payload.image_urls if item and item.strip()]
+
+    if not conversation_id:
+        return fail("conversation_id 参数不能为空", code=400)
+    if not query and not image_urls:
+        return fail("query 参数不能为空", code=400)
+
+    def sse(event: str, data) -> str:
+        return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    def generate():
+        try:
+            for event in get_conversation_chat_service().chat_stream(
+                conversation_id, query, payload.mode, image_urls
+            ):
+                yield sse(event["event"], event["data"])
+        except ValueError as exc:
+            yield sse("error", {"message": str(exc)})
+        except Exception as exc:
+            logger.exception("流式问答异常: %s", exc)
+            yield sse("error", {"message": f"服务器内部错误: {exc}"})
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            # Nginx 反代时禁用缓冲，保证打字机效果
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/conversation/image/upload")
