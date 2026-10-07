@@ -173,7 +173,7 @@ def test_bge_reranker_instance_is_cached():
         sys.modules.pop("FlagEmbedding", None)
 
 
-def test_get_context_falls_back_to_builtin_knowledge():
+def test_get_context_supplements_builtin_knowledge():
     class FakeBuiltin:
         def retrieve(self, query, k=3, category=None):
             return [{
@@ -189,6 +189,6 @@ def test_get_context_falls_back_to_builtin_knowledge():
 
     result = service.get_context_with_details("conv_x", "什么是 RAG")
 
-    assert result["source"] == "builtin_knowledge"
+    # 知识库现在是常驻补充：会话/公共索引落空时也能拿到知识库内容
     assert "检索增强生成" in result["context"]
     assert result["documents"][0]["source_name"] == "RAG 基础"

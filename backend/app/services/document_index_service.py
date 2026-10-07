@@ -89,10 +89,9 @@ class DocumentIndexService:
     def get_context(self, conversation_id: str, query: str, limit: int = 4) -> str:
         """获取检索上下文。
 
-        采用三级策略：
-        1. 混合检索（向量 + BM25）+ Reranking → 当前会话文档
-        2. 纯向量检索 → 公共全局索引
-        3. 内置知识库（在 BuiltinKnowledgeService 中实现）
+        策略：会话文档（混合检索 + Reranking）→ 公共全局索引，
+        内置知识库作为常驻补充（Top-2）——聊天中询问面试知识时，
+        AI 可结合知识库与自身知识作答。
         """
         docs = []
         conversation_db = self._load_conversation_db(conversation_id)
@@ -104,6 +103,7 @@ class DocumentIndexService:
             if public_retriever is not None:
                 docs = public_retriever.get_relevant_documents(query)
 
+        docs = self._supplement_with_builtin_knowledge(docs, query)
         return "\n\n".join(doc.page_content for doc in docs)
 
     def get_context_with_details(self, conversation_id: str, query: str, limit: int = 4) -> dict:
@@ -121,22 +121,7 @@ class DocumentIndexService:
                 docs = public_retriever.get_relevant_documents(query)
                 source = "public"
 
-        # 第三级兜底：内置知识库（标题作为来源名，供引用展示）
-        if not docs and self.builtin_knowledge_service is not None:
-            results = self.builtin_knowledge_service.retrieve(query, k=limit)
-            if results:
-                docs = [
-                    Document(
-                        page_content=item.get("content", ""),
-                        metadata={
-                            "original_name": item.get("title") or "内置知识库",
-                            "source": "builtin_knowledge_base",
-                            "score": item.get("score"),
-                        },
-                    )
-                    for item in results
-                ]
-                source = "builtin_knowledge"
+        docs = self._supplement_with_builtin_knowledge(docs, query)
 
         return {
             "context": "\n\n".join(doc.page_content for doc in docs),
@@ -150,6 +135,31 @@ class DocumentIndexService:
                 for doc in docs
             ],
         }
+
+    def _supplement_with_builtin_knowledge(self, docs: list[Document], query: str) -> list[Document]:
+        """内置知识库常驻补充：无论会话/公共索引是否命中，都追加最相关的 Top-2 条目。
+
+        知识库条目带标题作为来源名，供引用与来源面板展示。
+        """
+        if self.builtin_knowledge_service is None:
+            return docs
+
+        results = self.builtin_knowledge_service.retrieve(query, k=2)
+        if not results:
+            return docs
+
+        kb_docs = [
+            Document(
+                page_content=item.get("content", ""),
+                metadata={
+                    "original_name": item.get("title") or "内置知识库",
+                    "source": "builtin_knowledge_base",
+                    "score": item.get("score"),
+                },
+            )
+            for item in results
+        ]
+        return docs + kb_docs
 
     # ============================================================
     # 混合检索（向量检索 + BM25 关键词检索 + Reranking）

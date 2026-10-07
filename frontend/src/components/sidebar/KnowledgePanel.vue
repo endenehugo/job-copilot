@@ -17,14 +17,6 @@ async function onRebuild() {
   }
 }
 
-async function onSearch() {
-  try {
-    await kb.search()
-  } catch (err) {
-    notifyError(err)
-  }
-}
-
 async function onSubmit() {
   try {
     await kb.submitContent()
@@ -57,16 +49,8 @@ async function onExpand() {
       </span>
     </div>
 
-    <div style="display: flex; gap: 6px">
-      <el-input v-model="kb.query" size="small" placeholder="搜索面试知识…" @keyup.enter="onSearch" />
-      <el-button size="small" type="primary" :loading="kb.searching" @click="onSearch">搜索</el-button>
-    </div>
-    <div v-for="(r, i) in kb.results" :key="i" class="kb-result">
-      <div>
-        <span class="kb-title">{{ r.title }}</span>
-        <span class="kb-cat">{{ r.category }}</span>
-      </div>
-      <div class="kb-content">{{ r.content.slice(0, 120) }}…</div>
+    <div class="hint" style="margin-bottom: 6px">
+      找面试题不用搜：直接在对话里问，AI 会结合本知识库与自身知识回答。
     </div>
 
     <el-divider style="margin: 10px 0" />
