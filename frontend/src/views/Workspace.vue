@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { notifyError } from '../api'
 import { useAnalysisStore } from '../stores/analysis'
 import { useChatStore } from '../stores/chat'
@@ -36,6 +36,7 @@ const CHIPS = [
 const hasPanels = computed(
   () => !!(analysis.analysis || analysis.rewrite || interview.session || interview.transcript)
 )
+const panelsCollapsed = ref(false)
 
 // 切换会话后：聊天从 detail 回放，其余各模块按会话维度刷新
 watch(
@@ -101,10 +102,18 @@ function sendChip(text) {
       </header>
 
       <div class="main-area">
-        <section v-if="hasPanels" class="panels">
-          <ScoreCard v-if="analysis.analysis" />
-          <ProjectRewriteCard v-if="analysis.rewrite" />
-          <InterviewSession v-if="interview.session || interview.transcript" />
+        <section v-if="hasPanels" class="panels-zone">
+          <div class="panels-bar">
+            <span class="hint">分析面板（JD 报告 / 项目优化 / 模拟面试）</span>
+            <el-button size="small" text @click="panelsCollapsed = !panelsCollapsed">
+              {{ panelsCollapsed ? '展开面板 ▾' : '收起面板 ▴' }}
+            </el-button>
+          </div>
+          <section v-show="!panelsCollapsed" class="panels">
+            <ScoreCard v-if="analysis.analysis" />
+            <ProjectRewriteCard v-if="analysis.rewrite" />
+            <InterviewSession v-if="interview.session || interview.transcript" />
+          </section>
         </section>
 
         <section v-if="!chat.messages.length && !hasPanels" class="welcome">

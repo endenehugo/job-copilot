@@ -54,24 +54,25 @@ async function onImageChange(e) {
 
 <template>
   <div class="composer">
-    <div v-if="chat.pendingImages.length" class="composer-images">
-      <div v-for="(img, i) in chat.pendingImages" :key="img.url" class="thumb">
-        <img :src="img.url" alt="待发送图片" />
-        <span class="remove" @click="chat.removeImage(i)">×</span>
+    <div class="composer-card">
+      <div v-if="chat.pendingImages.length" class="composer-images">
+        <div v-for="(img, i) in chat.pendingImages" :key="img.url" class="thumb">
+          <img :src="img.url" alt="待发送图片" />
+          <span class="remove" @click="chat.removeImage(i)">×</span>
+        </div>
       </div>
-    </div>
-    <div class="composer-box">
       <el-input
         v-model="text"
         type="textarea"
-        :rows="2"
+        :autosize="{ minRows: 2, maxRows: 6 }"
         resize="none"
         placeholder="输入问题，Enter 发送，Shift+Enter 换行"
         @keydown="onKeydown"
       />
-      <div style="display: flex; flex-direction: column; gap: 6px">
+      <div class="composer-actions">
         <input ref="imgInput" type="file" accept="image/png,image/jpeg,image/webp" multiple style="display: none" @change="onImageChange" />
-        <el-button size="small" @click="pickImage">图片</el-button>
+        <el-button size="small" text @click="pickImage">🖼 图片</el-button>
+        <span class="hint">Enter 发送 · Shift+Enter 换行</span>
         <el-button type="primary" size="small" :loading="chat.sending" @click="send">发送</el-button>
       </div>
     </div>
