@@ -70,6 +70,7 @@ export const useChatStore = defineStore('chat', {
           content: res.data.answer,
           sources: res.data.sources,
           verification: res.data.verification,
+          files: res.data.files || null,
         })
         // 同步会话标题/预览
         await conv.loadList()
@@ -104,6 +105,7 @@ export const useChatStore = defineStore('chat', {
         content: '',
         sources: null,
         verification: null,
+        files: null,
         streaming: true,
       })
       this.messages.push(assistantMsg)
@@ -142,8 +144,11 @@ export const useChatStore = defineStore('chat', {
               assistantMsg.sources = event.data.sources
             } else if (event.event === 'verification') {
               assistantMsg.verification = event.data.verification
+            } else if (event.event === 'files') {
+              assistantMsg.files = event.data.files
             } else if (event.event === 'done') {
               assistantMsg.content = event.data.answer || assistantMsg.content
+              if (event.data.files) assistantMsg.files = event.data.files
               assistantMsg.streaming = false
             } else if (event.event === 'error') {
               streamError = event.data.message
