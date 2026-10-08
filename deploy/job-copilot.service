@@ -1,6 +1,8 @@
 [Unit]
 Description=Job Copilot backend (FastAPI + uvicorn, single worker)
-Documentation=file:/opt/job-copilot/deploy/部署指南.md
+# 部署文档见 deploy/部署指南.md
+# 不写 Documentation= 是因为 systemd 的 URL 解析不接受含中文的路径，
+# 会报 "Invalid URL, ignoring" 告警刷 journal
 After=network-online.target mysql.service
 Wants=network-online.target
 

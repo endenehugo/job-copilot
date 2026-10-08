@@ -83,6 +83,7 @@ foreach ($pattern in @(
         './backend/resources/chat_history.json',
         './frontend/node_modules', './frontend/node_modules/*',
         './deploy/_artifacts', './deploy/_artifacts/*',
+        './.workbuddy', './.workbuddy/*',
         './backend/backend.log', './frontend/frontend.log',
         '*.pyc', '__pycache__'
     )) { $excludes.Add($pattern) }
