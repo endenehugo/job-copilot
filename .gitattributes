@@ -1,0 +1,37 @@
+# 行尾统一：避免 Windows 的 autocrlf 把 shell 脚本检出成 CRLF，
+# 那会让 `bash deploy/*.sh` 报 `$'\r': command not found`（部署脚本、钩子都会中招）。
+*              text=auto
+
+# 必须在所有平台都是 LF 的文件
+*.sh           text eol=lf
+*.bash         text eol=lf
+.gitattributes text eol=lf
+.githooks/*    text eol=lf
+*.py           text eol=lf
+*.conf         text eol=lf
+*.service      text eol=lf
+*.md           text eol=lf
+*.yml          text eol=lf
+*.yaml         text eol=lf
+*.json         text eol=lf
+*.txt          text eol=lf
+Dockerfile     text eol=lf
+.env.example   text eol=lf
+
+# PowerShell 脚本在 Windows 上习惯 CRLF，但 LF 也能正常执行
+*.ps1          text eol=crlf
+*.bat          text eol=crlf
+*.cmd          text eol=crlf
+
+# 二进制：不要做任何行尾/编码转换
+*.faiss        binary
+*.pkl          binary
+*.pdf          binary
+*.png          binary
+*.jpg          binary
+*.jpeg         binary
+*.webp         binary
+*.docx         binary
+*.xlsx         binary
+*.gz           binary
+*.tar          binary

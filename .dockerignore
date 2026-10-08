@@ -1,0 +1,35 @@
+# Docker 构建上下文排除项（context 为仓库根目录）
+# 没有这份文件时，`COPY frontend/ .` 会把开发机的 node_modules 一起拷进镜像，
+# 覆盖 npm ci 装好的 Linux 依赖（Windows 上的 esbuild 二进制）导致构建失败。
+
+.git
+.gitignore
+
+# 密钥与配置
+.env
+backend/.env
+
+# Python
+backend/.venv
+**/__pycache__
+**/*.py[cod]
+backend/.pytest_cache
+
+# 前端依赖与产物（镜像内重新安装与构建）
+frontend/node_modules
+frontend/dist
+frontend/frontend.log
+
+# 运行态数据：容器内用数据卷，不打进镜像
+backend/resources/uploads
+backend/resources/parsed_docs
+backend/resources/faiss_index_uploads
+backend/resources/faiss_index_knowledge
+backend/resources/generated_docs
+backend/resources/chat_history.json
+
+# 其他
+*.log
+*.tmp
+p2_tmp
+deploy/_artifacts

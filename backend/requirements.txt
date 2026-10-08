@@ -6,6 +6,11 @@ fastapi==0.139.0
 uvicorn[standard]==0.50.2
 pydantic==2.13.4
 pydantic-settings==2.13.1
+# 以下两个是被直接使用的依赖，必须显式锁定：
+#   python-multipart 仅在运行时由 FastAPI 校验，静态 import 扫不出来——缺了会让
+#   所有带 Form/File 的接口（简历上传、截图分析）在应用导入期直接抛 RuntimeError
+python-multipart==0.0.19
+python-dotenv==1.0.1
 
 # 数据库
 SQLAlchemy==2.0.41

@@ -22,14 +22,14 @@ python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\act
 pip install -r requirements.txt
 cp ../.env.example ../.env                          # 填入 DASHSCOPE_API_KEY 与 MySQL 配置
 python scripts/init_db.py                           # 建库（表在首次连接时自动创建）
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8018           # 端口与 start.sh / vite 代理保持一致
 ```
 
 启动后：
 
-- 健康检查：`GET http://127.0.0.1:8000/api/v1/system/health`
-- Key 检测：`GET http://127.0.0.1:8000/api/v1/system/keycheck`
-- 接口文档：`http://127.0.0.1:8000/docs`
+- 健康检查：`GET http://127.0.0.1:8018/api/v1/system/health`
+- Key 检测：`GET http://127.0.0.1:8018/api/v1/system/keycheck`
+- 接口文档：`http://127.0.0.1:8018/docs`
 
 ## 前端快速启动
 
@@ -49,12 +49,27 @@ npm run dev   # http://localhost:5174（开发代理已指向 127.0.0.1:8018 后
 
 ## 部署
 
-两条路线（详见 `deploy/部署指南.md`）：
+完整方案见 `deploy/部署指南.md`（阿里云 Ubuntu · systemd + Nginx · 含数据迁移、回滚与排障）。两条路线选其一：
+- **宿主机手工**（当前推荐）：`deploy/push.ps1 -Server root@<公网IP> -FirstTime` 上传并初始化 → 写 `.env` → 建库 → `deploy/import-data.sh` 迁数据 → `deploy/push.ps1` 正式发布。
+- **Docker**：`cp .env.example .env`（补齐密钥、`MYSQL_ROOT_PASSWORD`、`MYSQL_PASSWORD`）→ `docker compose --env-file .env -f deploy/docker-compose.yml up -d --build`，一键拉起 mysql + backend + nginx(frontend)。
 
-- **Docker**：`cp .env.example .env`（补齐密钥与 MySQL 密码）→ `docker compose -f deploy/docker-compose.yml up -d --build`，一键拉起 mysql + backend + nginx(frontend)。
-- **手工**：uvicorn + systemd + Nginx（阿里云 Ubuntu 实测路线）。
+部署要点：Nginx 对 `/api/v1/conversation/chat/stream` 必须 `proxy_buffering off`；后端保持 `workers=1`（进程内缓存语义）；生产依赖已最小化，无 torch/OpenMP 冲突；站点默认同时监听 80 与 8080（裸 IP 走 80 实测可用，受限的是未备案域名）。
 
-部署要点：Nginx 对 `/api/v1/conversation/chat/stream` 必须 `proxy_buffering off`；后端保持 `workers=1`（进程内缓存语义）；生产依赖已最小化，无 torch/OpenMP 冲突。
+## 安全与密钥
+
+- **密钥只放 `.env`**（`DASHSCOPE_API_KEY` / `METASO_API_KEY` / `MYSQL_PASSWORD`），`.env` 与 `.env.*` 已被 `.gitignore` 忽略，仓库里只保留 `.env.example` 与 `deploy/.env.production.example` 两个占位模板。
+- 生产环境下 `.env` 权限为 `640 root:jobcopilot`，由 systemd `EnvironmentFile` 注入，不随代码发布（`push.ps1` 与 `release.sh` 都显式排除）。
+- `GET /api/v1/system/keycheck` 的脱敏只回显固定前缀与长度（`sk-w****（共 N 位）`），不返回尾部字符——尾部可用于校验猜测的 Key。
+- **提交前自检**（提交钩子会自动跑，也可手动）：
+
+  ```bash
+  git config core.hooksPath .githooks      # 启用 pre-commit 钩子（每台克隆一次）
+  bash deploy/check-secrets.sh --tracked   # 扫已跟踪文件
+  bash deploy/check-secrets.sh --history   # 推 GitHub 前扫全部历史
+  ```
+
+  命中时只报文件名与模式名，**不回显匹配原文**，避免密钥进终端日志。
+- 站点本身没有账号体系，公网访问请用 Nginx Basic Auth 门禁：`sudo bash deploy/enable-basic-auth.sh`（详见 `deploy/部署指南.md` 第八章）。
 
 ## 目录结构
 

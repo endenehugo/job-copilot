@@ -1,0 +1,9 @@
+#!/bin/sh
+# Job Copilot —— pre-commit 钩子：提交前扫密钥（委托给 deploy/check-secrets.sh）
+#
+# 启用（每台克隆都要做一次）：
+#   git config core.hooksPath .githooks
+#   chmod +x .githooks/pre-commit deploy/check-secrets.sh
+#
+# 应急跳过（确认无密钥时）：git commit --no-verify
+exec "$(git rev-parse --show-toplevel)/deploy/check-secrets.sh" --staged

@@ -221,9 +221,14 @@ def check_all(key: str | None = None) -> CheckReport:
 
 
 def _mask_key(key: str) -> str:
-    if len(key) <= 8:
+    """只回显固定前缀与长度。
+
+    旧实现是 key[:4] + "****" + key[-4:]：尾部 4 位足以让拿到脱敏串的人
+    校验自己猜的 Key 是否正确（离线爆破的验证位），因此不再回显尾部。
+    """
+    if not key or len(key) <= 8:
         return "***"
-    return key[:4] + "****" + key[-4:]
+    return f"{key[:4]}****（共 {len(key)} 位）"
 
 
 def _safe_status_code(resp: Any) -> int:

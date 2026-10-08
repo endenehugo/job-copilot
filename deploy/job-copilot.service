@@ -1,0 +1,42 @@
+[Unit]
+Description=Job Copilot backend (FastAPI + uvicorn, single worker)
+Documentation=file:/opt/job-copilot/deploy/部署指南.md
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=jobcopilot
+Group=jobcopilot
+WorkingDirectory=/opt/job-copilot/backend
+# .env 归属 root:jobcopilot 且 640，systemd 与应用进程都能读
+EnvironmentFile=/opt/job-copilot/.env
+Environment=PYTHONUNBUFFERED=1
+
+# workers 必须为 1：进程内持有 FAISS/BM25 缓存与懒加载单例（详见部署指南）
+ExecStart=/opt/job-copilot/backend/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 --port 8000 --workers 1 \
+    --timeout-keep-alive 65 --proxy-headers --forwarded-allow-ips=127.0.0.1
+
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=job-copilot
+
+# ---- 最小权限加固（若排查出权限问题，可整段注释后 daemon-reload）----
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+# 运行时会写：上传文件、解析文本、FAISS 索引、导出文档
+ReadWritePaths=/opt/job-copilot/backend/resources
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

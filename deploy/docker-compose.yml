@@ -1,3 +1,12 @@
+# Job Copilot —— Docker 路线（与宿主机 systemd 路线二选一）
+#
+# 在仓库根目录执行（-f 指向本文件时，build context 相对本文件解析，故用 .. 回到仓库根）：
+#   cp .env.example .env      # 补齐 DASHSCOPE_API_KEY、MYSQL_ROOT_PASSWORD、MYSQL_PASSWORD
+#   docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
+#   docker compose --env-file .env -f deploy/docker-compose.yml logs -f backend
+#
+# 说明：compose 的 ${VAR} 插值只读 --env-file 指定的文件（默认是当前工作目录的 .env），
+# 显式写 --env-file 可以避免「配置文件在 deploy/ 而 .env 在根目录」带来的取值歧义。
 services:
   mysql:
     image: mysql:8.0
@@ -6,6 +15,7 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE:-job_copilot}
       MYSQL_USER: ${MYSQL_USER:-jobcopilot}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在 .env 中设置}
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:
@@ -17,7 +27,7 @@ services:
 
   backend:
     build:
-      context: .
+      context: ..
       dockerfile: backend/Dockerfile
     environment:
       APP_ENV: prod
@@ -28,6 +38,9 @@ services:
       MYSQL_USER: ${MYSQL_USER:-jobcopilot}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在 .env 中设置}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-job_copilot}
+    volumes:
+      # 运行态数据（上传/解析/索引/导出）与容器生命周期解耦
+      - resources-data:/opt/job-copilot/resources
     depends_on:
       mysql:
         condition: service_healthy
@@ -35,13 +48,14 @@ services:
 
   frontend:
     build:
-      context: .
+      context: ..
       dockerfile: frontend/Dockerfile
     ports:
-      - "80:80"
+      - "${WEB_PORT:-8080}:80"
     depends_on:
       - backend
     restart: unless-stopped
 
 volumes:
   mysql-data:
+  resources-data:

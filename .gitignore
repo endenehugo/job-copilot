@@ -7,8 +7,27 @@ __pycache__/
 .venv/
 venv/
 
-# 环境与密钥
+# 环境与密钥（.env 永不入库；模板文件显式放行）
 .env
+.env.*
+!.env.example
+!deploy/.env.production.example
+*.pem
+*.key
+*.pfx
+*.p12
+id_rsa*
+id_ed25519*
+.htpasswd
+
+# 数据库导出与打包产物（含密钥/数据，别提交）
+*.sql
+*.sql.gz
+*.dump
+job-copilot-*.tar.gz
+
+# 个人分析产物（简历/JD 分析输出，不随仓库发布）
+backend/*_answer.txt
 
 # 前端
 node_modules/
@@ -30,3 +49,7 @@ backend/resources/chat_history.json
 *.log
 *.tmp
 p2_tmp/
+
+# 部署产物（导出包、发布包、清单，见 deploy/部署指南.md）
+deploy/_artifacts/
+.release-manifest.txt
