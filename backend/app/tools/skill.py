@@ -14,6 +14,10 @@ from app.utils import skill_loader
 
 class LoadSkillInput(BaseModel):
     skill_name: str = Field(description="技能名称，如 job-match、make-resume、interview")
+    reference: str = Field(
+        default="",
+        description="可选。技能目录下的 reference 文件相对路径，例如 references/page-balance-qa.md；留空则加载 SKILL.md 正文",
+    )
 
 
 class SkillTool(BaseTool):
@@ -28,20 +32,33 @@ class SkillTool(BaseTool):
         "求职申请表填写 job-apply、招聘邮件与投递追踪 offer），"
         "必须先调用本工具加载对应指南，再严格按指南执行。"
         "参数 skill_name 为技能名称；不确定有哪些技能时，可传 skill_name='list' 查看目录。"
+        "SKILL.md 中提到某个 reference（如 make-resume 的 references/default-resume-template.md）时，"
+        "把路径传进 reference 参数即可读取该细化规则。"
     )
     args_schema: Type[BaseModel] = LoadSkillInput
 
     def _run(self, *args: Any, **kwargs: Any) -> Any:
         try:
             skill_name = (kwargs.get("skill_name") or "").strip()
+            reference = (kwargs.get("reference") or "").strip()
             if not skill_name or skill_name.lower() == "list":
                 skills = skill_loader.list_skills()
                 lines = [f"- {s['name']}：{s['description'][:80]}" for s in skills]
                 return "可用技能列表：\n" + "\n".join(lines)
-            return skill_loader.load_skill(skill_name)
+            if reference:
+                return skill_loader.load_reference(skill_name, reference)
+            content = skill_loader.load_skill(skill_name)
+            refs = skill_loader.list_references(skill_name)
+            if refs:
+                content += (
+                    "\n\n---\n\n本技能还有以下细化 reference，需要判断排版/证据细节时用 "
+                    "reference 参数按需读取（不要一次性全读）：\n"
+                    + "\n".join(f"- {ref}" for ref in refs)
+                )
+            return content
         except FileNotFoundError:
             available = "、".join(s["name"] for s in skill_loader.list_skills())
-            return f"错误：技能 {kwargs.get('skill_name')!r} 不存在。可用技能：{available}"
+            return f"错误：技能 {kwargs.get('skill_name')!r} 或 reference {kwargs.get('reference')!r} 不存在。可用技能：{available}"
         except ValueError as exc:
             return f"错误：{exc}"
         except Exception as exc:

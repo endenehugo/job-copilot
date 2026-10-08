@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -21,12 +22,20 @@ def build_agent_system_prompt() -> str:
         "可用工具：\n"
         "- web_search_tool：搜索最新网页信息\n"
         "- word_document_tool：生成 Word 文档\n"
+        "- html_document_tool：生成并保存 HTML 文件，返回下载链接；内容较长时用 start/append/finish 分块写入\n"
         "- jd_parser_tool：分析职位描述（JD），提取关键词、要求、加分项等\n"
         "- resume_score_tool：根据 JD 对简历进行结构化评分\n"
         "- project_rewrite_tool：优化简历中的项目经历描述\n"
         "- mock_interview_tool：根据 JD 和简历生成面试题\n"
         "- load_skill：加载内置求职技能的完整操作指南\n"
         "用户如果需要分析 JD、评分简历、优化项目或模拟面试，请主动调用对应工具。\n\n"
+        "【文件交付硬性规则】只要用户要求得到一份文件（简历、报告、页面等），"
+        "必须先调用 word_document_tool 或 html_document_tool 落盘，再把工具返回的下载链接写进回答。"
+        "严禁把整份 HTML 或长文档源码直接贴到对话里——前端会剥离标签，用户只能看到乱码或空白。"
+        "回答里除了链接，只写简短的交付说明。\n\n"
+        "【make-resume 专属规则】调用 load_skill 加载 make-resume 后，"
+        "必须按指南先把模板骨架写全（分块调用 html_document_tool），最后 finish 落盘，"
+        "再给出下载链接与简短说明。不要因为内容长就只输出部分 HTML。\n\n"
         "内置求职技能（ASu-skills）：当用户任务匹配以下技能场景时，"
         "必须先调用 load_skill 加载该技能的完整指南，再严格按指南执行：\n"
         + skill_loader.catalog_prompt().replace("{", "{{").replace("}", "}}")
@@ -41,7 +50,7 @@ from app.services.document_index_service import DocumentIndexService
 from app.services.context_compression_service import ContextCompressionService
 from app.services.context_verification_service import ContextVerificationService
 from app.core.config import settings
-from app.tools import MultiplyTool, WebSearchTool, WordDocumentTool, JdParserTool, ResumeScoreTool, ProjectRewriteTool, MockInterviewTool, SkillTool
+from app.tools import MultiplyTool, WebSearchTool, WordDocumentTool, HtmlDocumentTool, JdParserTool, ResumeScoreTool, ProjectRewriteTool, MockInterviewTool, SkillTool
 from app.utils import ResourceUtils
 from app.utils import skill_loader
 
@@ -55,6 +64,9 @@ class ConversationChatService:
 
     _IMAGE_MARKDOWN_PATTERN = re.compile(r"!\[[^\]]*\]\((/conversation/image/[^)\s]+)\)")
     _MAX_HISTORY_MESSAGES = 20  # 历史消息压缩阈值
+    # 工具轮上限：make-resume 需要 load_skill 取指南 -> 多块 html_document_tool 写入 -> 收尾，
+    # 3 轮不够用，模型会在没落盘的情况下被强制收尾（表现就是"生成不出 HTML 文件"）。
+    _MAX_TOOL_ROUNDS = 6
 
     def __post_init__(self):
         self.qa_llm = None
@@ -111,6 +123,7 @@ class ConversationChatService:
         ) = self._prepare_chat(conversation_id, query, mode, image_urls)
 
         # 3. 生成回答
+        files: list[dict] = []
         if normalized_image_urls:
             answer = self._invoke_multimodal(compressed_history, context, effective_query, normalized_image_urls)
         else:
@@ -122,7 +135,7 @@ class ConversationChatService:
             }).to_messages()
 
             if normalized_mode == "agent":
-                answer = self._invoke_agent(prompt_messages)
+                answer, files = self._invoke_agent(prompt_messages)
             else:
                 answer = self.qa_llm.invoke(prompt_messages).content
 
@@ -151,6 +164,7 @@ class ConversationChatService:
             "conversation": detail,
             "verification": verification_result,
             "sources": source_docs,
+            "files": files,
         }
 
     def chat_stream(self, conversation_id: str, query: str, mode: str = "agent", image_urls: list[str] | None = None):
@@ -174,6 +188,8 @@ class ConversationChatService:
         ) = self._prepare_chat(conversation_id, query, mode, image_urls)
 
         yield {"event": "meta", "data": {"conversation_id": conversation_id, "mode": normalized_mode}}
+
+        files: list[dict] = []
 
         if normalized_image_urls:
             answer = self._invoke_multimodal(compressed_history, context, effective_query, normalized_image_urls)
@@ -202,7 +218,7 @@ class ConversationChatService:
                 if merged is not None and merged.tool_calls:
                     messages = list(prompt_messages)
                     messages.append(AIMessage(content=merged.content or "", tool_calls=list(merged.tool_calls)))
-                    final_answer = self._run_tool_rounds(messages)
+                    final_answer, files = self._run_tool_rounds(messages)
                     answer = final_answer or streamed_text
                     if final_answer:
                         yield {"event": "delta", "data": {"text": final_answer}}
@@ -233,23 +249,31 @@ class ConversationChatService:
 
         yield {"event": "sources", "data": {"sources": source_docs}}
         yield {"event": "verification", "data": {"verification": verification_result}}
+        if files:
+            yield {"event": "files", "data": {"files": files}}
         yield {
             "event": "done",
             "data": {
                 "answer": cited_answer,
                 "original_answer": answer,
                 "conversation": detail,
+                "files": files,
             },
         }
 
-    def _run_tool_rounds(self, messages: list) -> str:
-        """首轮流式命中工具调用后，继续执行工具轮并返回最终回答（非流式）。"""
-        for _ in range(3):
+    def _run_tool_rounds(self, messages: list) -> tuple[str, list[dict]]:
+        """首轮流式命中工具调用后，继续执行工具轮并返回（最终回答，本轮落盘的文件产物）。"""
+        files: list[dict] = []
+        last_text = ""
+        for _ in range(self._MAX_TOOL_ROUNDS):
             response = self.agent_llm.invoke(messages)
             messages.append(response)
             tool_calls = response.tool_calls or []
             if not tool_calls:
-                return response.content
+                return response.content or last_text, files
+
+            if response.content:
+                last_text = response.content
 
             for tool_call in tool_calls:
                 tool = self.tool_dic.get(tool_call.get("name"))
@@ -261,8 +285,12 @@ class ConversationChatService:
                     except Exception as exc:
                         logger.warning("工具 %s 执行异常: %s", tool_call.get("name"), exc)
                         content = f"工具执行失败：{exc}"
+                artifact = self._collect_artifact(content)
+                if artifact:
+                    files.append(artifact)
                 messages.append(ToolMessage(tool_call_id=tool_call.get("id"), content=content))
-        return ""
+        # 轮次用尽：不要返回空串让用户看到"AI 什么都没说"，给出已收集到的最后一段文本
+        return last_text, files
 
     def _ensure_initialized(self):
         if self.qa_llm is not None:
@@ -278,7 +306,7 @@ class ConversationChatService:
             model=settings.multimodal_model,
             temperature=0.7,
         )
-        tools = [MultiplyTool(), WebSearchTool(), WordDocumentTool(), JdParserTool(), ResumeScoreTool(), ProjectRewriteTool(), MockInterviewTool(), SkillTool()]
+        tools = [MultiplyTool(), WebSearchTool(), WordDocumentTool(), HtmlDocumentTool(), JdParserTool(), ResumeScoreTool(), ProjectRewriteTool(), MockInterviewTool(), SkillTool()]
         self.tool_dic = {tool.name: tool for tool in tools}
         self.agent_llm = self.qa_llm.bind_tools(tools)
 
@@ -299,9 +327,30 @@ class ConversationChatService:
             "请明确说明后再给出基于图片本身的判断。"
         )
 
-    def _invoke_agent(self, messages: list) -> str:
+    @classmethod
+    def _collect_artifact(cls, content: Any) -> dict | None:
+        """从工具结果里抽取 html_document_tool 返回的 artifact（非 JSON 或没有 artifact 则忽略）。"""
+        if not isinstance(content, str) or "artifact" not in content:
+            return None
+        try:
+            payload = json.loads(content)
+        except (ValueError, TypeError):
+            return None
+        artifact = payload.get("artifact") if isinstance(payload, dict) else None
+        if not isinstance(artifact, dict):
+            return None
+        return {
+            "name": artifact.get("name", ""),
+            "url": artifact.get("url", ""),
+            "size": artifact.get("size", 0),
+            "format": artifact.get("format", "html"),
+        }
+
+    def _invoke_agent(self, messages: list) -> tuple[str, list[dict]]:
+        """执行工具轮直到拿到最终回答，同时回收本轮落盘的文件产物。"""
         chain_output = ""
-        for _ in range(3):
+        files: list[dict] = []
+        for _ in range(self._MAX_TOOL_ROUNDS):
             response = self.agent_llm.invoke(messages)
             messages.append(response)
             tool_calls = response.tool_calls or []
@@ -320,8 +369,11 @@ class ConversationChatService:
                         # 工具错误作为字符串回传给模型：保证消息序列完整，让模型自行决定下一步
                         logger.warning("工具 %s 执行异常: %s", tool_call.get("name"), exc)
                         content = f"工具执行失败：{exc}"
+                artifact = self._collect_artifact(content)
+                if artifact:
+                    files.append(artifact)
                 messages.append(ToolMessage(tool_call_id=tool_call.get("id"), content=content))
-        return chain_output
+        return chain_output, files
 
     def _invoke_multimodal(self, history: list[dict], context: str, query: str, image_urls: list[str]) -> str:
         content_parts = []

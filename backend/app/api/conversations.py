@@ -180,6 +180,31 @@ def upload_image(conversation_id: str = Form(...), file: UploadFile = File(...))
     )
 
 
+_FILE_DOWNLOAD_DIR = "generated_docs"
+
+
+@router.get("/conversation/file/{filename}")
+def serve_generated_file(filename: str):
+    """下载会话过程中生成的交付文件（如 html_document_tool 产出的 HTML 简历）。
+
+    一律以 attachment 方式下发，避免服务端托管的用户内容在本站域内被浏览器直接渲染成页面。
+    """
+    if not _is_safe_segment(filename):
+        return fail("filename 非法", code=400)
+
+    file_dir = os.path.realpath(ResourceUtils.get_resource_path(_FILE_DOWNLOAD_DIR))
+    file_path = os.path.realpath(os.path.join(file_dir, filename))
+    if not file_path.startswith(file_dir + os.sep) or not os.path.isfile(file_path):
+        return fail("文件不存在", code=404)
+
+    return FileResponse(
+        file_path,
+        media_type="application/octet-stream",
+        filename=filename,
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
 @image_router.get("/conversation/image/{conversation_id}/{filename}")
 def serve_image(conversation_id: str, filename: str):
     if not _is_safe_segment(conversation_id):

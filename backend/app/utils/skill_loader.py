@@ -73,6 +73,48 @@ def load_skill(name: str) -> str:
         return f.read()
 
 
+def list_references(name: str) -> list[str]:
+    """列出某个技能下的 reference 文件相对路径（如 references/page-balance-qa.md）。
+
+    技能不存在或没有 references/ 时返回空列表；名称非法抛 ValueError。
+    """
+    name = (name or "").strip()
+    if not _SKILL_NAME_PATTERN.fullmatch(name):
+        raise ValueError(f"非法技能名: {name!r}")
+    refs_dir = os.path.join(_skills_root(), name, "references")
+    if not os.path.isdir(refs_dir):
+        return []
+    found: list[str] = []
+    for dirpath, _dirnames, filenames in os.walk(refs_dir):
+        for filename in sorted(filenames):
+            if not filename.endswith(".md"):
+                continue
+            full = os.path.join(dirpath, filename)
+            found.append(os.path.relpath(full, os.path.join(_skills_root(), name)).replace("\\", "/"))
+    return sorted(found)
+
+
+def load_reference(name: str, reference: str) -> str:
+    """加载技能下某个 reference 的正文。
+
+    reference 为相对于技能目录的路径，只允许引用 references/ 下的 .md 文件，
+    防止路径穿越。文件不存在抛 FileNotFoundError。
+    """
+    name = (name or "").strip()
+    if not _SKILL_NAME_PATTERN.fullmatch(name):
+        raise ValueError(f"非法技能名: {name!r}")
+    skill_dir = os.path.realpath(os.path.join(_skills_root(), name))
+    target = os.path.realpath(os.path.join(skill_dir, (reference or "").strip()))
+    if not target.startswith(skill_dir + os.sep):
+        raise ValueError(f"越界的 reference 路径: {reference!r}")
+    if not target.startswith(os.path.join(skill_dir, "references") + os.sep):
+        raise ValueError("reference 必须位于技能目录的 references/ 下")
+    if not target.endswith(".md") or not os.path.isfile(target):
+        raise FileNotFoundError(reference)
+    with open(target, "r", encoding="utf-8") as f:
+        return f.read()
+
+
 def catalog_prompt() -> str:
     """生成进系统提示的技能清单文本（名称 + 一句话描述）。"""
     lines = []

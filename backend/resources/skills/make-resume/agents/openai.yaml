@@ -1,6 +1,4 @@
 interface:
   display_name: "make-resume"
-  short_description: "默认使用 ASu 模板制作可编辑简历"
-  icon_small: "../../assets/asu-circle.png"
-  icon_large: "../../assets/asu-circle.png"
-  default_prompt: "使用 $make-resume，根据我的经历制作可编辑的中文 HTML 简历；默认使用 ASu 同款模板，如需其他模板请指定，并准备 PDF 导出。"
+  short_description: "制作 A4 单栏高密度中文 HTML 简历并给出下载链接"
+  default_prompt: "使用 $make-resume，根据我的经历制作中文 HTML 简历；默认使用 ASu 同款骨架，如需其他模板或页数请指定。"
