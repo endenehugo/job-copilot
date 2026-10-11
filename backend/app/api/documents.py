@@ -42,7 +42,9 @@ def upload_document(conversation_id: str = Form(...), file: UploadFile = File(..
     document = store_service.bind_document(conversation_id, parsed_document, status="parsed")
     try:
         documents = store_service.get_conversation_documents(conversation_id)
-        get_document_index_service().rebuild_conversation_index(conversation_id, documents)
+        # A12：增量追加新文档，不再对全部文档重复 embedding；
+        # 无索引/追加失败时服务内部自动退回全量重建
+        get_document_index_service().add_document_to_index(conversation_id, document, documents)
         document = store_service.update_document_status(document["document_id"], "indexed")
     except Exception:
         store_service.update_document_status(document["document_id"], "failed")

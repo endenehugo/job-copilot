@@ -4,6 +4,8 @@
     uvicorn app.main:app --reload --port 8000
 """
 
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -14,11 +16,27 @@ from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.response import ok
 from app.utils import ResourceUtils
+from app.utils.api_key_checker import check_all
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     ResourceUtils.init(settings.resources_root)
+    # B16/A22：启动时检测一次 API Key，结果缓存在 app.state 供 /health 查询。
+    # "服务健康但 Key 无效"不再无感——部署后看日志或 /health 的 keys_ok 即可。
+    try:
+        report = await asyncio.to_thread(check_all)
+        application.state.keys_ok = report.all_passed
+        if not report.all_passed:
+            failed = [r.name for r in report.results if not r.passed]
+            logger.warning("API Key 启动检测未通过：%s；聊天/评分等功能将不可用", ", ".join(failed))
+    except Exception as exc:  # 检测本身异常不能阻断启动
+        application.state.keys_ok = None
+        logger.warning("API Key 启动检测执行失败：%s", exc)
     yield
 
 

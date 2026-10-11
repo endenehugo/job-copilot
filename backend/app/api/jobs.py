@@ -64,13 +64,14 @@ def analyze_job(payload: JobAnalyzeRequest) -> dict:
 
     jd_analysis = get_job_description_service().analyze(jd_text)
     scoring_result = get_resume_scoring_service().score(resume_text, jd_text, jd_analysis)
-    save_analysis(
+    analysis_id = save_analysis(
         conversation_id=conversation_id,
         jd_text=jd_text,
         jd_analysis=jd_analysis,
         scoring_result=scoring_result,
     )
     response_data = build_analysis_response(jd_analysis, scoring_result)
+    response_data["analysis_id"] = analysis_id
     warnings = scoring_result.get("warnings") or []
     return ok(response_data, message="分析完成", degraded=bool(warnings), warnings=warnings)
 
@@ -150,7 +151,7 @@ def analyze_from_screenshot(payload: ScreenshotAnalyzeRequest) -> dict:
     scoring_result = get_resume_scoring_service().score(resume_text, jd_text, jd_analysis)
 
     # 5. 落库
-    save_analysis(
+    analysis_id = save_analysis(
         conversation_id=conversation_id,
         jd_text=jd_text,
         jd_analysis=jd_analysis,
@@ -159,6 +160,7 @@ def analyze_from_screenshot(payload: ScreenshotAnalyzeRequest) -> dict:
 
     # 6. 组装返回
     response_data = build_analysis_response(jd_analysis, scoring_result)
+    response_data["analysis_id"] = analysis_id
     response_data["extracted_jd_preview"] = jd_text[:500] + ("..." if len(jd_text) > 500 else "")
     warnings = scoring_result.get("warnings") or []
     return ok(response_data, message="截图分析完成", degraded=bool(warnings), warnings=warnings)

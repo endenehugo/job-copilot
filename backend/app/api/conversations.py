@@ -78,8 +78,10 @@ def conversation_chat(payload: ChatRequest) -> dict:
     result = get_conversation_chat_service().chat(
         conversation_id, query, payload.mode, image_urls
     )
+    # 工具链异常结束的告警从 data 提升到信封，让前端拦截器统一提示
+    warnings = result.pop("warnings", None) or []
     # 旧契约：信封 message 携带回答文本，data 携带完整结果
-    return ok(result, message=result["answer"])
+    return ok(result, message=result["answer"], degraded=bool(warnings), warnings=warnings)
 
 
 @router.post("/conversation/chat/stream")

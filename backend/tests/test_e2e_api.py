@@ -199,6 +199,8 @@ def _mock_all_llm(_patch_db):
 
     _do_patch("app.services.document_index_service.DocumentIndexService.rebuild_conversation_index",
               return_value=None)
+    _do_patch("app.services.document_index_service.DocumentIndexService.add_document_to_index",
+              return_value={"chunk_count": 1, "mode": "incremental"})
     _do_patch("app.services.document_index_service.DocumentIndexService.delete_conversation_index",
               return_value=None)
     _do_patch("app.services.document_index_service.DocumentIndexService.get_context_with_details",

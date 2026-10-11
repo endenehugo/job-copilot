@@ -100,3 +100,77 @@ def test_verification_failure_does_not_break_done():
 
     assert "done" in names
     assert "verification" not in names, "校验失败不应产出 verification 事件"
+
+
+# ---------------------------------------------------------------------------
+# T12：Agent 工具链进度事件与轮次耗尽降级（A5 / B11 / B12）
+# ---------------------------------------------------------------------------
+
+from langchain_core.messages import AIMessage  # noqa: E402
+
+_TOOL_CALL = [{"name": "web_search", "args": {"q": "x"}, "id": "c1"}]
+
+
+def _build_tool_service() -> ConversationChatService:
+    svc = _build_service()
+    # 首轮流式命中工具调用（bind_tools 状态下模型请求工具时通常无文本输出）
+    svc.agent_llm.stream.return_value = iter([AIMessageChunk(content="", tool_calls=list(_TOOL_CALL))])
+    svc.tool_dic = {"web_search": MagicMock(invoke=MagicMock(return_value="搜索结果内容"))}
+    return svc
+
+
+def test_tool_rounds_emit_status_events():
+    """每个工具执行前要产出 tool_status 事件，正常完成不带降级标记。"""
+    svc = _build_tool_service()
+    svc.agent_llm.invoke.side_effect = [
+        AIMessage(content="", tool_calls=list(_TOOL_CALL)),
+        AIMessage(content="根据搜索结果，答案是……"),
+    ]
+
+    events = list(svc.chat_stream("conv_1", "搜一下", "agent", []))
+    statuses = [e for e in events if e["event"] == "tool_status"]
+
+    assert statuses, "工具执行前必须产出 tool_status 事件"
+    assert statuses[0]["data"]["name"] == "web_search"
+    assert statuses[0]["data"]["step"] == 1
+    done = next(e for e in events if e["event"] == "done")
+    assert "degraded" not in done["data"], "正常完成的回答不应带降级标记"
+
+
+def test_round_exhaustion_marks_degraded():
+    """工具轮耗尽返回的道歉/中间内容必须带 degraded + warnings，不能再伪装成正常回答。"""
+    svc = _build_tool_service()
+    # 每次都要求调用工具 → 6 轮耗尽，永远拿不到最终回答
+    svc.agent_llm.invoke.return_value = AIMessage(content="", tool_calls=list(_TOOL_CALL))
+
+    events = list(svc.chat_stream("conv_1", "搜一下", "agent", []))
+    done = next(e for e in events if e["event"] == "done")
+
+    assert done["data"].get("degraded") is True
+    assert done["data"].get("warnings"), "轮次耗尽必须携带 warnings"
+
+
+def test_tool_failure_marks_degraded():
+    """单个工具执行失败也要让前端知道，而不是拿到看似正常的回答。"""
+    svc = _build_tool_service()
+    svc.tool_dic["web_search"].invoke.side_effect = RuntimeError("Key 无效")
+    svc.agent_llm.invoke.side_effect = [
+        AIMessage(content="", tool_calls=list(_TOOL_CALL)),
+        AIMessage(content="根据搜索结果，答案是……"),
+    ]
+
+    events = list(svc.chat_stream("conv_1", "搜一下", "agent", []))
+    done = next(e for e in events if e["event"] == "done")
+
+    assert done["data"].get("degraded") is True
+    assert any("失败" in w for w in done["data"]["warnings"])
+
+
+def test_nonstream_agent_promotes_warnings():
+    """非流式 agent 路径同样要把工具链告警带出 service 层。"""
+    svc = _build_tool_service()
+    svc.agent_llm.invoke.return_value = AIMessage(content="", tool_calls=list(_TOOL_CALL))
+
+    result = svc.chat("conv_1", "搜一下", "agent", [])
+
+    assert result["warnings"], "chat() 返回必须携带工具链 warnings"

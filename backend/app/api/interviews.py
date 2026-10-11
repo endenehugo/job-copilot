@@ -26,6 +26,10 @@ from app.repositories import (
     JobAnalysisRepository,
 )
 from app.schemas.interview import InterviewAnswerRequest, InterviewStartRequest
+from app.services.interview_simulation_service import (
+    MAX_INTERVIEW_ROUNDS,
+    normalize_interview_evaluation,
+)
 
 router = APIRouter(prefix="/api/v1")
 
@@ -180,12 +184,18 @@ def answer_interview(payload: InterviewAnswerRequest) -> dict:
         user_answer=answer,
         round_number=round_number,
     )
+    eval_result, eval_warnings = normalize_interview_evaluation(eval_result)
 
-    score = eval_result.get("score", 0)
+    score = eval_result.get("score")
     evaluation = eval_result.get("evaluation", "")
     next_action = eval_result.get("next_action", "continue")
     follow_up = eval_result.get("follow_up")
     overall_summary = eval_result.get("overall_summary")
+
+    # 硬性轮次上限：模型未按约定收尾时兜底结束，避免无限追问
+    if next_action != "summary" and round_number >= MAX_INTERVIEW_ROUNDS:
+        next_action = "summary"
+        eval_warnings.append(f"已达最大轮数（{MAX_INTERVIEW_ROUNDS}），面试自动结束")
 
     # 事务二：落库（用户回答 + 评价 + 下一题 + 会话状态）
     now = datetime.now()
@@ -261,6 +271,7 @@ def answer_interview(payload: InterviewAnswerRequest) -> dict:
                 "total_rounds": round_number,
             },
             message="面试结束",
+            warnings=eval_warnings or None,
         )
 
     return ok(
@@ -274,6 +285,7 @@ def answer_interview(payload: InterviewAnswerRequest) -> dict:
             "total_rounds": round_number,
         },
         message="回答已记录",
+        warnings=eval_warnings or None,
     )
 
 

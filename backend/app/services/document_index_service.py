@@ -34,26 +34,7 @@ class DocumentIndexService:
     def rebuild_conversation_index(self, conversation_id: str, documents: list[dict]) -> dict:
         index_dir = self._get_conversation_index_dir(conversation_id)
         tmp_dir = index_dir + ".tmp"
-        texts = []
-        metadatas = []
-
-        for document in documents:
-            parsed_text_path = document.get("parsed_text_path")
-            if not parsed_text_path or not os.path.exists(parsed_text_path):
-                continue
-            with open(parsed_text_path, "r", encoding="utf-8") as text_file:
-                content = text_file.read().strip()
-            if not content:
-                continue
-
-            for chunk_index, chunk in enumerate(self._chunk_text(content)):
-                texts.append(self._build_index_text(document, chunk))
-                metadatas.append({
-                    "conversation_id": conversation_id,
-                    "document_id": document.get("document_id"),
-                    "chunk_index": chunk_index,
-                    "original_name": document.get("original_name", ""),
-                })
+        texts, metadatas = self._build_chunks(conversation_id, documents)
 
         # 先把新索引写到临时目录，构建成功后再替换旧目录。
         # 旧版先删后建：embedding API 一失败旧索引就没了，会话检索瘫痪到重新上传。
@@ -81,6 +62,81 @@ class DocumentIndexService:
         # 清理缓存的 BM25 索引，重建时重新生成
         self._bm25_indexes.pop(conversation_id, None)
         return {"chunk_count": len(texts)}
+
+    def add_document_to_index(self, conversation_id: str, document: dict, all_documents: list[dict]) -> dict:
+        """A12 增量更新：上传时只对新文档切分 + embedding，追加进现有索引。
+
+        - 已有索引 → FAISS.add_texts 追加，临时目录 + 原子替换（复用已付费的 embedding）
+        - 无索引 / 现有索引损坏 / 追加失败 → 退回全量重建（用 all_documents）
+        - 按 document_id 去重：重试上传不会把同一文档入库两遍
+        删除文档仍走全量重建（删除语义下增量成本更高）。
+        """
+        texts, metadatas = self._build_chunks(conversation_id, [document])
+        if not texts:
+            return {"chunk_count": 0, "mode": "noop"}
+
+        doc_id = document.get("document_id")
+        try:
+            db = self._load_conversation_db(conversation_id)
+        except Exception:
+            logger.warning("会话 %s 现有索引加载失败，退回全量重建", conversation_id, exc_info=True)
+            db = None
+
+        if db is not None:
+            # docstore 是 InMemoryDocstore，_dict 里是已入库的 Document
+            existing_ids = {
+                (getattr(doc, "metadata", None) or {}).get("document_id")
+                for doc in db.docstore._dict.values()
+            }
+            if doc_id and doc_id in existing_ids:
+                logger.info("文档 %s 已在会话 %s 索引中，跳过重复入库", doc_id, conversation_id)
+                return {"chunk_count": 0, "mode": "deduped"}
+            try:
+                db.add_texts(texts, metadatas=metadatas)
+                index_dir = self._get_conversation_index_dir(conversation_id)
+                tmp_dir = index_dir + ".tmp"
+                if os.path.isdir(tmp_dir):
+                    shutil.rmtree(tmp_dir)
+                try:
+                    db.save_local(tmp_dir)
+                except Exception:
+                    if os.path.isdir(tmp_dir):
+                        shutil.rmtree(tmp_dir)
+                    raise
+                if os.path.isdir(index_dir):
+                    shutil.rmtree(index_dir)
+                os.rename(tmp_dir, index_dir)
+                self._bm25_indexes.pop(conversation_id, None)
+                return {"chunk_count": len(texts), "mode": "incremental"}
+            except Exception:
+                logger.warning("会话 %s 增量追加失败，退回全量重建", conversation_id, exc_info=True)
+
+        result = self.rebuild_conversation_index(conversation_id, all_documents)
+        result["mode"] = "full_rebuild"
+        return result
+
+    def _build_chunks(self, conversation_id: str, documents: list[dict]) -> tuple[list[str], list[dict]]:
+        """文档列表 → (index texts, metadatas)。增量与全量共用。"""
+        texts = []
+        metadatas = []
+        for document in documents:
+            parsed_text_path = document.get("parsed_text_path")
+            if not parsed_text_path or not os.path.exists(parsed_text_path):
+                continue
+            with open(parsed_text_path, "r", encoding="utf-8") as text_file:
+                content = text_file.read().strip()
+            if not content:
+                continue
+
+            for chunk_index, chunk in enumerate(self._chunk_text(content)):
+                texts.append(self._build_index_text(document, chunk))
+                metadatas.append({
+                    "conversation_id": conversation_id,
+                    "document_id": document.get("document_id"),
+                    "chunk_index": chunk_index,
+                    "original_name": document.get("original_name", ""),
+                })
+        return texts, metadatas
 
     # ============================================================
     # 上下文检索入口（含混合检索 + Reranking）

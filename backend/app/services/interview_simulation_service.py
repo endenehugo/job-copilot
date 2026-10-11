@@ -12,6 +12,11 @@ from app.core.json_utils import parse_llm_json
 
 logger = logging.getLogger(__name__)
 
+# 与 system prompt 中的约定一致：整场面试最多 8 轮（含初始问题）
+MAX_INTERVIEW_ROUNDS = 8
+
+_VALID_ACTIONS = ("continue", "summary")
+
 INTERVIEW_START_SYSTEM_PROMPT = """你是一位资深的面试官，擅长根据职位描述（JD）和候选人简历，出针对性的面试题。
 请严格分析提供的 JD 和简历，生成一组面试题，返回 **严格的 JSON**，包含以下字段：
 
@@ -159,4 +164,60 @@ class InterviewSimulationService:
     def _parse_response(self, content: str) -> dict:
         logger.info("LLM interview raw response (first 500 chars): %s", content[:500])
         return parse_llm_json(content, "面试服务返回格式异常，无法提取结构化结果")
+
+
+def normalize_interview_evaluation(result: dict) -> tuple[dict, list[str]]:
+    """规范化 evaluate_answer 的 LLM 输出，返回 (规范化结果, 告警列表)。
+
+    模型偶发漏字段/类型错乱，直接透传会造成两类静默失败：
+    1. 缺 score 时被上层 ``.get("score", 0)`` 兜底成 0 分落库——把"模型没返回"
+       说成"你得了 0 分"；这里改为 score=None 并告警。
+    2. next_action="continue" 却没有 follow_up——前端拿到空下一题白屏卡死；
+       这里转为 summary 让面试正常收尾。
+    """
+    warnings: list[str] = []
+
+    # score：缺字段/类型错乱一律置 None，不伪造 0 分
+    raw_score = result.get("score")
+    score: float | None
+    if isinstance(raw_score, bool) or raw_score is None:
+        score = None
+    elif isinstance(raw_score, (int, float)):
+        score = float(raw_score)
+    elif isinstance(raw_score, str):
+        try:
+            score = float(raw_score.strip())
+            warnings.append("模型返回的评分格式异常，已自动修正")
+        except ValueError:
+            score = None
+    else:
+        score = None
+    if score is not None:
+        score = max(0.0, min(100.0, score))
+    else:
+        warnings.append("模型未返回有效评分，本轮标记为未评分")
+
+    # next_action：非法值回退 continue（并在无下一题时由下方转为 summary）
+    next_action = result.get("next_action")
+    if next_action not in _VALID_ACTIONS:
+        if next_action is not None:
+            warnings.append(f"模型返回了未知的 next_action={next_action!r}，已按继续提问处理")
+        next_action = "continue"
+
+    follow_up_raw = result.get("follow_up")
+    follow_up = str(follow_up_raw).strip() if follow_up_raw else ""
+
+    if next_action == "continue" and not follow_up:
+        next_action = "summary"
+        warnings.append("模型未给出下一题，面试提前结束")
+
+    overall_summary_raw = result.get("overall_summary")
+    normalized = {
+        "evaluation": str(result.get("evaluation") or ""),
+        "score": score,
+        "next_action": next_action,
+        "follow_up": follow_up or None,
+        "overall_summary": str(overall_summary_raw).strip() if overall_summary_raw else None,
+    }
+    return normalized, warnings
 

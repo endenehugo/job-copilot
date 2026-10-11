@@ -126,10 +126,12 @@ def test_agent_tool_exception_returns_tool_message():
     service.agent_llm = SimpleNamespace(invoke=lambda messages: responses.pop(0))
 
     messages = [HumanMessage(content="hi")]
-    output, files = service._invoke_agent(messages)
+    output, files, warnings = service._invoke_agent(messages)
 
     assert output == "done"
     assert files == []
+    # 工具失败即使被模型恢复（给出最终回答），也要让前端知道数据可能不完整
+    assert warnings == ["工具 boom_tool 执行失败"]
     tool_messages = [m for m in messages if isinstance(m, ToolMessage)]
     assert len(tool_messages) == 1
     assert "工具执行失败" in tool_messages[0].content

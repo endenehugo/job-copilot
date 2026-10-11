@@ -131,6 +131,7 @@ class ConversationChatService:
 
         # 3. 生成回答
         files: list[dict] = []
+        tool_warnings: list[str] = []
         if normalized_image_urls:
             answer = self._invoke_multimodal(compressed_history, context, effective_query, normalized_image_urls)
         else:
@@ -142,7 +143,7 @@ class ConversationChatService:
             }).to_messages()
 
             if normalized_mode == "agent":
-                answer, files = self._invoke_agent(prompt_messages)
+                answer, files, tool_warnings = self._invoke_agent(prompt_messages)
             else:
                 answer = self.qa_llm.invoke(prompt_messages).content
 
@@ -172,6 +173,8 @@ class ConversationChatService:
             "verification": verification_result,
             "sources": source_docs,
             "files": files,
+            # 工具链异常结束的告警；API 层弹出后转为信封 degraded/warnings
+            "warnings": tool_warnings,
         }
 
     def chat_stream(self, conversation_id: str, query: str, mode: str = "agent", image_urls: list[str] | None = None):
@@ -201,6 +204,7 @@ class ConversationChatService:
         yield {"event": "meta", "data": {"conversation_id": conversation_id, "mode": normalized_mode}}
 
         files: list[dict] = []
+        tool_warnings: list[str] = []
 
         if normalized_image_urls:
             answer = self._invoke_multimodal(compressed_history, context, effective_query, normalized_image_urls)
@@ -231,7 +235,13 @@ class ConversationChatService:
                 if merged is not None and merged.tool_calls:
                     messages = list(prompt_messages)
                     messages.append(AIMessage(content=merged.content or "", tool_calls=list(merged.tool_calls)))
-                    final_answer, files = self._run_tool_rounds(messages)
+                    tool_result: dict = {}
+                    # 透传工具进度事件：agent 模式的长工具链对用户可见
+                    for ev in self._run_tool_rounds(messages, tool_result):
+                        yield ev
+                    final_answer = tool_result.get("answer", "")
+                    files = tool_result.get("files", [])
+                    tool_warnings = tool_result.get("warnings", [])
                     answer = final_answer or streamed_text
                     if final_answer:
                         yield {"event": "delta", "data": {"text": final_answer}}
@@ -252,16 +262,18 @@ class ConversationChatService:
         yield {"event": "sources", "data": {"sources": source_docs}}
         if files:
             yield {"event": "files", "data": {"files": files}}
-        yield {
-            "event": "done",
-            "data": {
-                # 引用标注依赖完整回答，随 verification 事件补发
-                "answer": answer,
-                "original_answer": answer,
-                "conversation": detail,
-                "files": files,
-            },
+        done_data = {
+            # 引用标注依赖完整回答，随 verification 事件补发
+            "answer": answer,
+            "original_answer": answer,
+            "conversation": detail,
+            "files": files,
         }
+        if tool_warnings:
+            # 工具链异常结束（轮次耗尽/工具失败）不是正常完成的回答，必须让前端知道
+            done_data["degraded"] = True
+            done_data["warnings"] = tool_warnings
+        yield {"event": "done", "data": done_data}
 
         if context and normalized_mode != "memory":
             try:
@@ -278,36 +290,70 @@ class ConversationChatService:
             except Exception as exc:
                 logger.warning("上下文验证异常，跳过: %s", exc)
 
-    def _run_tool_rounds(self, messages: list) -> tuple[str, list[dict]]:
-        """首轮流式命中工具调用后，继续执行工具轮并返回（最终回答，本轮落盘的文件产物）。"""
+    def _run_tool_rounds(self, messages: list, result: dict):
+        """首轮流式命中工具调用后，继续执行工具轮。
+
+        改为生成器：每个工具执行前产出 tool_status 事件（SSE 透传给前端，
+        让 agent 模式的长工具链可见，不再对着空气泡干等）；最终回答与
+        文件产物写入 result 字典。
+
+        result 键：answer / files / warnings / exhausted（轮次是否用尽）。
+        """
         files: list[dict] = []
+        warnings: list[str] = []
         last_text = ""
-        for _ in range(self._MAX_TOOL_ROUNDS):
+        step = 0
+
+        for round_no in range(self._MAX_TOOL_ROUNDS):
             response = self.agent_llm.invoke(messages)
             messages.append(response)
             tool_calls = response.tool_calls or []
             if not tool_calls:
-                return response.content or last_text, files
+                result.update(
+                    answer=response.content or last_text,
+                    files=files,
+                    warnings=warnings,
+                    exhausted=False,
+                )
+                return
 
             if response.content:
                 last_text = response.content
 
             for tool_call in tool_calls:
-                tool = self.tool_dic.get(tool_call.get("name"))
-                if tool is None:
-                    content = f"工具不存在：{tool_call.get('name')}"
-                else:
-                    try:
-                        content = tool.invoke(tool_call.get("args"))
-                    except Exception as exc:
-                        logger.warning("工具 %s 执行异常: %s", tool_call.get("name"), exc)
-                        content = f"工具执行失败：{exc}"
+                name = tool_call.get("name") or ""
+                step += 1
+                yield {
+                    "event": "tool_status",
+                    "data": {"name": name, "step": step, "round": round_no + 1, "max_rounds": self._MAX_TOOL_ROUNDS},
+                }
+                content, failed = self._execute_tool_call(tool_call)
+                if failed:
+                    warnings.append(f"工具 {name} 执行失败")
                 artifact = self._collect_artifact(content)
                 if artifact:
                     files.append(artifact)
                 messages.append(ToolMessage(tool_call_id=tool_call.get("id"), content=content))
-        # 轮次用尽：不要返回空串让用户看到"AI 什么都没说"，给出已收集到的最后一段文本
-        return last_text, files
+
+        # 轮次用尽：不要返回空串让用户看到"AI 什么都没说"，给出已收集到的最后一段文本，
+        # 但必须让前端知道这不是正常完成的回答
+        if last_text:
+            warnings.append("工具调用已达轮次上限，返回的是中间内容而非最终回答")
+        else:
+            warnings.append("工具调用已达轮次上限，未能生成最终回答")
+        result.update(answer=last_text, files=files, warnings=warnings, exhausted=True)
+
+    def _execute_tool_call(self, tool_call: dict) -> tuple[str, bool]:
+        """执行单个工具调用，返回 (内容, 是否失败)。失败内容仍回传模型保持消息序列完整。"""
+        name = tool_call.get("name") or ""
+        tool = self.tool_dic.get(name)
+        if tool is None:
+            return f"工具不存在：{name}", True
+        try:
+            return tool.invoke(tool_call.get("args")), False
+        except Exception as exc:
+            logger.warning("工具 %s 执行异常: %s", name, exc)
+            return f"工具执行失败：{exc}", True
 
     def _ensure_initialized(self):
         if self.qa_llm is not None:
@@ -363,34 +409,34 @@ class ConversationChatService:
             "format": artifact.get("format", "html"),
         }
 
-    def _invoke_agent(self, messages: list) -> tuple[str, list[dict]]:
-        """执行工具轮直到拿到最终回答，同时回收本轮落盘的文件产物。"""
+    def _invoke_agent(self, messages: list) -> tuple[str, list[dict], list[str]]:
+        """执行工具轮直到拿到最终回答，同时回收本轮落盘的文件产物与告警。"""
         chain_output = ""
         files: list[dict] = []
+        warnings: list[str] = []
         for _ in range(self._MAX_TOOL_ROUNDS):
             response = self.agent_llm.invoke(messages)
             messages.append(response)
             tool_calls = response.tool_calls or []
             if not tool_calls:
                 chain_output = response.content
-                break
+                return chain_output, files, warnings
 
             for tool_call in tool_calls:
-                tool = self.tool_dic.get(tool_call.get("name"))
-                if tool is None:
-                    content = f"工具不存在：{tool_call.get('name')}"
-                else:
-                    try:
-                        content = tool.invoke(tool_call.get("args"))
-                    except Exception as exc:
-                        # 工具错误作为字符串回传给模型：保证消息序列完整，让模型自行决定下一步
-                        logger.warning("工具 %s 执行异常: %s", tool_call.get("name"), exc)
-                        content = f"工具执行失败：{exc}"
+                content, failed = self._execute_tool_call(tool_call)
+                if failed:
+                    warnings.append(f"工具 {tool_call.get('name')} 执行失败")
                 artifact = self._collect_artifact(content)
                 if artifact:
                     files.append(artifact)
                 messages.append(ToolMessage(tool_call_id=tool_call.get("id"), content=content))
-        return chain_output, files
+        # 轮次用尽：与流式路径一致，标记为非正常完成
+        warnings.append(
+            "工具调用已达轮次上限，返回的是中间内容而非最终回答"
+            if chain_output
+            else "工具调用已达轮次上限，未能生成最终回答"
+        )
+        return chain_output, files, warnings
 
     def _invoke_multimodal(self, history: list[dict], context: str, query: str, image_urls: list[str]) -> str:
         content_parts = []

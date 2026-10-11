@@ -20,8 +20,12 @@ _SCORE_FIELD_MAP = {
 }
 
 
-def save_analysis(conversation_id: str, jd_text: str, jd_analysis: dict, scoring_result: dict) -> None:
-    """保存一次 JD 解析 + 简历评分结果，并同步最新简历版本的分数。"""
+def save_analysis(conversation_id: str, jd_text: str, jd_analysis: dict, scoring_result: dict) -> int:
+    """保存一次 JD 解析 + 简历评分结果，并同步最新简历版本的分数。返回分析记录 id。
+
+    前端导出 Markdown 需要 analysis_id，分析响应里必须带上，否则刚分析完
+    无法直接导出。
+    """
     now = datetime.now()
     dimensions = scoring_result.get("dimensions", {}) or {}
     total_score = float(scoring_result.get("total_score", 0) or 0)
@@ -29,7 +33,7 @@ def save_analysis(conversation_id: str, jd_text: str, jd_analysis: dict, scoring
     session = DatabaseManager.get_session()
     try:
         with session.begin():
-            JobAnalysisRepository.create(
+            entity = JobAnalysisRepository.create(
                 session,
                 conversation_id=conversation_id,
                 jd_text=jd_text,
@@ -53,6 +57,7 @@ def save_analysis(conversation_id: str, jd_text: str, jd_analysis: dict, scoring
                 ResumeVersionRepository.update_scores(
                     session, latest_version, total_score=total_score, dimensions=dimensions
                 )
+        return entity.id
     finally:
         DatabaseManager.remove_session()
 

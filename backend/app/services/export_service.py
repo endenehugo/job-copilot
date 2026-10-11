@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 
 from app.repositories import DatabaseManager
 from app.repositories.job_analysis_repository import JobAnalysisRepository
 from app.repositories.interview_repository import InterviewSessionRepository, InterviewMessageRepository
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -21,20 +24,24 @@ class ExportService:
             if analysis is None:
                 raise ValueError("分析记录不存在")
 
-            def _safe_json_load(value: str) -> list:
+            def _safe_json_load(value: str, label: str = "") -> list:
+                """JSON 解析失败时不再静默当作"没有"：日志告警 + 导出内容里标注。"""
                 if not value:
                     return []
                 try:
                     return json.loads(value) if isinstance(value, str) else value
                 except (json.JSONDecodeError, TypeError):
-                    return []
+                    logger.warning(
+                        "导出 JD 分析(id=%s)时字段 %s 解析失败，原始数据可能已损坏", analysis_id, label
+                    )
+                    return [f"（{label}解析失败，原始数据可能已损坏）"]
 
-            keywords = _safe_json_load(analysis.keywords)
-            requirements = _safe_json_load(analysis.requirements)
-            bonus_points = _safe_json_load(analysis.bonus_points)
-            strengths = _safe_json_load(analysis.strengths)
-            gaps = _safe_json_load(analysis.gaps)
-            suggestions = _safe_json_load(analysis.suggestions)
+            keywords = _safe_json_load(analysis.keywords, "keywords")
+            requirements = _safe_json_load(analysis.requirements, "requirements")
+            bonus_points = _safe_json_load(analysis.bonus_points, "bonus_points")
+            strengths = _safe_json_load(analysis.strengths, "strengths")
+            gaps = _safe_json_load(analysis.gaps, "gaps")
+            suggestions = _safe_json_load(analysis.suggestions, "suggestions")
 
             lines = [
                 "# JD 分析报告",
