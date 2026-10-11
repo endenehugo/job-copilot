@@ -70,7 +70,9 @@ def analyze_job(payload: JobAnalyzeRequest) -> dict:
         jd_analysis=jd_analysis,
         scoring_result=scoring_result,
     )
-    return ok(build_analysis_response(jd_analysis, scoring_result), message="分析完成")
+    response_data = build_analysis_response(jd_analysis, scoring_result)
+    warnings = scoring_result.get("warnings") or []
+    return ok(response_data, message="分析完成", degraded=bool(warnings), warnings=warnings)
 
 
 @router.get("/job/analysis/latest")
@@ -158,4 +160,5 @@ def analyze_from_screenshot(payload: ScreenshotAnalyzeRequest) -> dict:
     # 6. 组装返回
     response_data = build_analysis_response(jd_analysis, scoring_result)
     response_data["extracted_jd_preview"] = jd_text[:500] + ("..." if len(jd_text) > 500 else "")
-    return ok(response_data, message="截图分析完成")
+    warnings = scoring_result.get("warnings") or []
+    return ok(response_data, message="截图分析完成", degraded=bool(warnings), warnings=warnings)

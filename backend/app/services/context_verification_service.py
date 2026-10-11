@@ -35,7 +35,8 @@ class ContextVerificationService:
                 "is_supported": bool,       # 整体是否基于上下文
                 "unsupported_claims": [],   # 无支撑的断言列表
                 "supported_claims": [],     # 有支撑的断言列表
-                "hallucination_risk": str,  # "low" | "medium" | "high"
+                "hallucination_risk": str,  # "low" | "medium" | "high" | "unknown"（未验证/验证失败）
+                # 仅当 hallucination_risk == "unknown" 时可能出现 verification_error
                 "verification_detail": str,  # 验证说明文本
             }
         """
@@ -44,11 +45,18 @@ class ContextVerificationService:
                 "is_supported": True,
                 "unsupported_claims": [],
                 "supported_claims": [],
-                "hallucination_risk": "low",
-                "verification_detail": "无回答或无上下文，跳过验证。",
+                # 没跑验证就不能说"风险低"——旧的 "low" 会让前端渲染绿色徽章，
+                # 等于把"未验证"冒充成"已验证且可信"。
+                "hallucination_risk": "unknown",
+                "verification_detail": "无回答或无上下文，未执行验证。",
             }
 
         result = self._llm_verify(answer, context)
+
+        # 验证本身失败时风险等级已定为 unknown，不要用空 claims 再算一次
+        # （空 claims → total=0 → ratio=0 → 会被判成 low）
+        if result.get("hallucination_risk"):
+            return result
 
         # 计算幻觉风险等级
         result["hallucination_risk"] = self._assess_risk(
@@ -191,6 +199,10 @@ class ContextVerificationService:
             return {
                 "supported_claims": [],
                 "unsupported_claims": [],
+                # 失败不是"无风险"。旧代码这里没有 risk 字段，上层 _assess_risk
+                # 拿到两个空列表会算出 ratio=0 → "low"，验证挂了却显示绿色低风险。
+                "hallucination_risk": "unknown",
+                "verification_error": str(exc),
                 "verification_detail": f"验证过程出现异常: {exc}",
             }
 

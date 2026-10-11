@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 from langchain_community.chat_models import ChatTongyi
 from app.core.llm_factory import build_chat_llm
@@ -89,19 +90,38 @@ class ResumeScoringService:
 
     @staticmethod
     def _validate_and_normalize(result: dict) -> dict:
+        """规范化评分结果。
+
+        缺失字段一律置 None 而**不是 0**：0 是一个真实分数，会把"模型这次没返回"
+        伪装成"你的简历 0 分"，既落到库里也会让用户以为自己很差。缺失项通过
+        warnings 回报，由 API 层标记为 degraded。
+        """
         dimensions = result.get("dimensions", {}) or {}
-        normalized = {
-            "total_score": max(0, min(100, int(float(result.get("total_score", 0) or 0)))),
+        warnings: list[str] = []
+
+        def norm_score(value: Any, label: str) -> int | None:
+            # 注意用 `is None` 而不是 `not value`：0 分是合法分数，不能当成缺失
+            if value is None or (isinstance(value, str) and not value.strip()):
+                warnings.append(f"模型未返回{label}，该项未评分")
+                return None
+            try:
+                score = int(float(value))
+            except (TypeError, ValueError):
+                warnings.append(f"{label} 返回值无法解析，该项未评分")
+                return None
+            return max(0, min(100, score))
+
+        return {
+            "total_score": norm_score(result.get("total_score"), "总分"),
             "dimensions": {
-                "skill_match": max(0, min(100, int(float(dimensions.get("skill_match", 0) or 0)))),
-                "project_relevance": max(0, min(100, int(float(dimensions.get("project_relevance", 0) or 0)))),
-                "expression_quality": max(0, min(100, int(float(dimensions.get("expression_quality", 0) or 0)))),
-                "job_fitness": max(0, min(100, int(float(dimensions.get("job_fitness", 0) or 0)))),
+                "skill_match": norm_score(dimensions.get("skill_match"), "技能匹配分"),
+                "project_relevance": norm_score(dimensions.get("project_relevance"), "项目相关度分"),
+                "expression_quality": norm_score(dimensions.get("expression_quality"), "表达质量分"),
+                "job_fitness": norm_score(dimensions.get("job_fitness"), "岗位契合度分"),
             },
             "strengths": [str(s).strip() for s in (result.get("strengths", []) or []) if s],
             "gaps": [str(g).strip() for g in (result.get("gaps", []) or []) if g],
             "suggestions": [str(s).strip() for s in (result.get("suggestions", []) or []) if s],
+            "warnings": warnings,
         }
-
-        return normalized
 

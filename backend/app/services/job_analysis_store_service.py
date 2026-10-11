@@ -90,7 +90,11 @@ def analysis_entity_to_dict(entity: JobAnalysis) -> dict:
 
 
 def build_analysis_response(jd_analysis: dict, scoring_result: dict) -> dict:
-    """组装 /job/analyze 的响应 data（与旧版 JobHandler._build_response 一致）。"""
+    """组装 /job/analyze 的响应 data（与旧版 JobHandler._build_response 一致）。
+
+    scoring.warnings 非空表示评分不完整（例如模型漏返回总分），调用方应把它
+    作为 ok(..., degraded=True, warnings=...) 传出去，让前端提示而不是假装满分。
+    """
     return {
         "jd_analysis": jd_analysis,
         "scoring": {
@@ -99,5 +103,6 @@ def build_analysis_response(jd_analysis: dict, scoring_result: dict) -> dict:
             "strengths": scoring_result.get("strengths", []),
             "gaps": scoring_result.get("gaps", []),
             "suggestions": scoring_result.get("suggestions", []),
+            "warnings": scoring_result.get("warnings", []),
         },
     }
