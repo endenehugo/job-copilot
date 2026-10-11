@@ -90,6 +90,37 @@ class ConversationStoreService:
         finally:
             session.close()
 
+    def get_messages_after(self, conversation_id: str, after_id: int) -> list[dict]:
+        """只加载 id > after_id 的消息，用于增量摘要。"""
+        session = self.database_manager.get_session()
+        try:
+            messages = self.message_repository.list_after_id(session, conversation_id, after_id)
+            return [self._message_to_dict(item) for item in messages]
+        finally:
+            session.close()
+
+    def get_conversation_summary(self, conversation_id: str) -> tuple[str, int]:
+        """读取持久化的摘要和水位线。"""
+        session = self.database_manager.get_session()
+        try:
+            conv = self.conversation_repository.get_by_conversation_id(session, conversation_id)
+            if conv is None:
+                return ("", 0)
+            return (conv.context_summary or "", conv.summarized_until_id or 0)
+        finally:
+            session.close()
+
+    def save_conversation_summary(self, conversation_id: str, summary: str, until_id: int) -> None:
+        """持久化增量摘要，乐观锁防止回退。"""
+        session = self.database_manager.get_session()
+        try:
+            with session.begin():
+                self.conversation_repository.update_context_summary(
+                    session, conversation_id, summary, until_id
+                )
+        finally:
+            session.close()
+
     def get_conversation_documents(self, conversation_id: str) -> list[dict]:
         session = self.database_manager.get_session()
         try:
@@ -214,6 +245,7 @@ class ConversationStoreService:
     @staticmethod
     def _message_to_dict(item) -> dict:
         return {
+            "id": item.id,
             "message_id": item.message_id,
             "conversation_id": item.conversation_id,
             "role": item.role,

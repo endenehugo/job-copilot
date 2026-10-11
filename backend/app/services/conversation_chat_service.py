@@ -63,7 +63,7 @@ class ConversationChatService:
     context_verification_service: ContextVerificationService = field(default_factory=ContextVerificationService)
 
     _IMAGE_MARKDOWN_PATTERN = re.compile(r"!\[[^\]]*\]\((/conversation/image/[^)\s]+)\)")
-    _MAX_HISTORY_MESSAGES = 20  # 历史消息压缩阈值
+    _MAX_HISTORY_MESSAGES = 12  # 历史消息压缩阈值（保留最近 6 轮逐字，更早走增量摘要）
     # 工具轮上限：make-resume 需要 load_skill 取指南 -> 多块 html_document_tool 写入 -> 收尾，
     # 3 轮不够用，模型会在没落盘的情况下被强制收尾（表现就是"生成不出 HTML 文件"）。
     _MAX_TOOL_ROUNDS = 6
@@ -85,10 +85,17 @@ class ConversationChatService:
         self.conversation_store_service.ensure_conversation_exists(conversation_id)
         self._ensure_initialized()
 
-        history = self.conversation_store_service.get_conversation_messages(conversation_id)
-        compressed_history = self.context_compression_service.compress_history(
-            history, max_messages=self._MAX_HISTORY_MESSAGES
+        old_summary, summarized_until_id = self.conversation_store_service.get_conversation_summary(conversation_id)
+        history = self.conversation_store_service.get_messages_after(conversation_id, summarized_until_id)
+
+        compressed_history, new_summary, new_watermark = self.context_compression_service.compress_history(
+            history, old_summary=old_summary, max_messages=self._MAX_HISTORY_MESSAGES
         )
+
+        if new_summary != old_summary and new_watermark > 0:
+            self.conversation_store_service.save_conversation_summary(
+                conversation_id, new_summary, new_watermark
+            )
 
         if normalized_mode == "memory":
             context = ""
@@ -475,6 +482,8 @@ class ConversationChatService:
                 messages.append(HumanMessage(content=content))
             elif role == "assistant":
                 messages.append(AIMessage(content=content))
+            elif role == "system":
+                messages.append(SystemMessage(content=content))
         return messages
 
     @staticmethod
@@ -487,4 +496,6 @@ class ConversationChatService:
                 messages.append(HumanMessage(content=content))
             elif role == "assistant":
                 messages.append(AIMessage(content=content))
+            elif role == "system":
+                messages.append(SystemMessage(content=content))
         return messages

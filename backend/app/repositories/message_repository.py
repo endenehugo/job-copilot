@@ -33,3 +33,15 @@ class MessageRepository:
             .order_by(asc(ConversationMessage.created_at), asc(ConversationMessage.id))
         )
         return list(session.execute(stmt).scalars())
+
+    def list_after_id(self, session: Session, conversation_id: str, after_id: int) -> list[ConversationMessage]:
+        """只查 id > after_id 的消息，用于增量加载。"""
+        stmt = (
+            select(ConversationMessage)
+            .where(
+                ConversationMessage.conversation_id == conversation_id,
+                ConversationMessage.id > after_id,
+            )
+            .order_by(asc(ConversationMessage.id))
+        )
+        return list(session.execute(stmt).scalars())

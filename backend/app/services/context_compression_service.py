@@ -20,35 +20,44 @@ class ContextCompressionService:
 
     # ---- 公开方法 ----
 
-    def compress_history(self, history: list[dict], max_messages: int = 20) -> list[dict]:
-        """压缩过长的对话历史。
-
-        如果消息数超过 max_messages，将最早的消息压缩为摘要，
-        保留最近的消息保持完整。
+    def compress_history(
+        self,
+        history: list[dict],
+        old_summary: str = "",
+        max_messages: int = 20,
+    ) -> tuple[list[dict], str, int]:
+        """增量压缩对话历史。
 
         Args:
-            history: 对话历史 [(role, content), ...]
+            history: 水位线之后的新消息（每条需含 id 字段）
+            old_summary: 上次持久化的摘要
             max_messages: 保留的最大消息数
 
         Returns:
-            压缩后的历史：如果未超限则原样返回；
-            如果超限则返回 [summary_msg, ...recent_msgs]
+            (压缩后消息列表, 新摘要, 新水位线 id)
+            - 压缩后消息列表：[summary_msg?] + recent_msgs
+            - 新摘要：合并后的摘要文本（未变化则返回 old_summary）
+            - 新水位线：最后一条被压缩消息的 id（未变化则返回 0）
         """
         if len(history) <= max_messages:
-            return history
+            result = []
+            if old_summary:
+                result.append(self._make_summary_msg(old_summary))
+            return (result + history, old_summary, 0)
 
-        # 需要压缩
         compress_count = len(history) - max_messages
         compress_messages = history[:compress_count]
         recent_messages = history[compress_count:]
+        new_watermark = compress_messages[-1].get("id", 0)
 
-        summary = self._summarize_messages(compress_messages)
-        summary_msg = {
-            "role": "system",
-            "content": f"[上下文摘要] 以下是较早对话的摘要：\n{summary}",
-        }
-        logger.info("对话历史压缩完成：%d 条 → 摘要 + %d 条", compress_count, len(recent_messages))
-        return [summary_msg] + recent_messages
+        new_summary = self._merge_summary(old_summary, compress_messages)
+        summary_msg = self._make_summary_msg(new_summary)
+
+        logger.info(
+            "增量摘要完成：旧摘要 %d 字 + %d 条新消息 → 新摘要 %d 字，水位线 → %d",
+            len(old_summary), compress_count, len(new_summary), new_watermark,
+        )
+        return ([summary_msg] + recent_messages, new_summary, new_watermark)
 
     def extract_key_information(self, history: list[dict]) -> str:
         """从对话历史中提取关键信息（实体、事实、需求）。
@@ -119,6 +128,43 @@ class ContextCompressionService:
         return "\n\n".join(parts)
 
     # ---- 内部方法 ----
+
+    @staticmethod
+    def _make_summary_msg(summary: str) -> dict:
+        return {
+            "role": "system",
+            "content": f"[上下文摘要] 以下是较早对话的摘要：\n{summary}",
+        }
+
+    def _merge_summary(self, old_summary: str, new_messages: list[dict]) -> str:
+        """将旧摘要与新溢出消息合并为更新后的摘要。"""
+        new_text = self._format_history(new_messages)
+        if not new_text:
+            return old_summary
+
+        llm = self._get_llm()
+
+        if old_summary:
+            prompt = (
+                "你已有一份对话摘要，现在需要将新的对话内容合并进去，生成更新后的摘要。\n"
+                "要求：中文，300 字以内，保留关键事实、用户需求、已得出的结论，去掉过时信息。\n\n"
+                f"【已有摘要】\n{old_summary}\n\n"
+                f"【新增对话】\n{new_text}\n\n"
+                "更新后的摘要："
+            )
+        else:
+            prompt = (
+                "请将以下对话内容压缩为简洁的摘要（中文，300 字以内），"
+                "保留关键事实、用户需求和已得出的结论：\n\n"
+                f"{new_text}\n\n摘要："
+            )
+
+        try:
+            result = llm.invoke(prompt).content.strip()
+            return result[:800]
+        except Exception as exc:
+            logger.warning("增量摘要生成失败，保留旧摘要: %s", exc)
+            return old_summary
 
     def _summarize_messages(self, messages: list[dict]) -> str:
         """将一批消息压缩为摘要。"""

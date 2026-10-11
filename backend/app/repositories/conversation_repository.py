@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, desc, select
+from sqlalchemy import DateTime, Integer, String, Text, desc, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.repositories.mysql_base import Base
@@ -17,6 +17,8 @@ class Conversation(Base):
     mode: Mapped[str] = mapped_column(String(32), nullable=False, default="agent")
     message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_message_preview: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    context_summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    summarized_until_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
@@ -57,3 +59,20 @@ class ConversationRepository:
         if mode is not None:
             conversation.mode = mode
         return conversation
+
+    def update_context_summary(
+        self,
+        session: Session,
+        conversation_id: str,
+        summary: str,
+        until_id: int,
+    ) -> bool:
+        """写入增量摘要，乐观锁：仅当 until_id 前进时才更新。"""
+        conv = self.get_by_conversation_id(session, conversation_id)
+        if conv is None:
+            return False
+        if until_id <= conv.summarized_until_id:
+            return False
+        conv.context_summary = summary
+        conv.summarized_until_id = until_id
+        return True
