@@ -53,7 +53,8 @@ onMounted(async () => {
 })
 
 function sendChip(text) {
-  chat.sendStream(text)
+  // 旧代码没有 catch：sendStream 失败会变成未处理的 Promise rejection，界面毫无反馈
+  chat.sendStream(text).catch((err) => notifyError(err))
 }
 </script>
 

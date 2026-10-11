@@ -144,6 +144,8 @@ export const useChatStore = defineStore('chat', {
               assistantMsg.sources = event.data.sources
             } else if (event.event === 'verification') {
               assistantMsg.verification = event.data.verification
+              // 引用标注依赖完整回答，后端在 done 之后补发，这里覆盖为带标注版本
+              if (event.data.cited_answer) assistantMsg.content = event.data.cited_answer
             } else if (event.event === 'files') {
               assistantMsg.files = event.data.files
             } else if (event.event === 'done') {
@@ -157,7 +159,14 @@ export const useChatStore = defineStore('chat', {
         }
 
         assistantMsg.streaming = false
-        if (streamError) assistantMsg.content = `**出错了**：${streamError}`
+        if (streamError) {
+          // 已有部分内容时保留，不要用错误提示覆盖掉已生成的部分
+          if (assistantMsg.content.trim()) {
+            assistantMsg.content += `\n\n**注意**：${streamError}`
+          } else {
+            assistantMsg.content = `**出错了**：${streamError}`
+          }
+        }
         await conv.loadList()
       } catch (err) {
         assistantMsg.streaming = false
