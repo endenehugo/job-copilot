@@ -53,3 +53,6 @@ p2_tmp/
 # 部署产物（导出包、发布包、清单，见 deploy/部署指南.md）
 deploy/_artifacts/
 .release-manifest.txt
+
+# 工作笔记（本地会话数据，不入库）
+.workbuddy/
