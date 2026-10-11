@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { interviewApi } from '../api'
+import { interviewApi, notifyError } from '../api'
 import { useConversationStore } from './conversation'
 
 export const useInterviewStore = defineStore('interview', {
@@ -15,6 +15,20 @@ export const useInterviewStore = defineStore('interview', {
   }),
   getters: {
     completed: (s) => s.rounds.length > 0 && s.rounds[s.rounds.length - 1].action === 'summary',
+    // 当前题目：优先用上一轮返回的追问，否则用开局的第一题
+    currentQuestion: (s) => {
+      if (!s.session) return ''
+      const last = s.rounds[s.rounds.length - 1]
+      if (last?.next_question) return last.next_question
+      return s.session.current_question?.question || ''
+    },
+    // 结束时后端给出的总结（仅 completed 时有值）
+    summary: (s) => {
+      const last = s.rounds[s.rounds.length - 1]
+      return last && last.action === 'summary' ? last : null
+    },
+    // 已完成的轮次（不含总结那条），用于逐轮展示评分与评价
+    answeredRounds: (s) => s.rounds.filter((r) => r.action !== 'summary'),
   },
   actions: {
     async loadHistory(cid) {
@@ -24,8 +38,10 @@ export const useInterviewStore = defineStore('interview', {
       try {
         const res = await interviewApi.list(cid)
         this.history = res.data.sessions
-      } catch {
+      } catch (err) {
+        // 静默清空会让用户把"加载失败"当成"从来没有过面试"
         this.history = []
+        notifyError(err, '面试历史加载失败')
       }
     },
     async start() {

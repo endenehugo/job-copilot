@@ -73,7 +73,8 @@ async function onImageChange(e) {
         <input ref="imgInput" type="file" accept="image/png,image/jpeg,image/webp" multiple style="display: none" @change="onImageChange" />
         <el-button size="small" text @click="pickImage">🖼 图片</el-button>
         <span class="hint">Enter 发送 · Shift+Enter 换行</span>
-        <el-button type="primary" size="small" :loading="chat.sending" @click="send">发送</el-button>
+        <el-button v-if="chat.sending" size="small" @click="chat.stopStreaming()">停止生成</el-button>
+        <el-button v-else type="primary" size="small" @click="send">发送</el-button>
       </div>
     </div>
   </div>

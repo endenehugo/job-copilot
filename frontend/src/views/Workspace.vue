@@ -38,6 +38,7 @@ watch(
 watch(
   () => conv.currentId,
   (cid) => {
+    chat.stopStreaming() // 旧会话的流式回答不再接收，避免后台空跑
     analysis.loadLatest(cid)
     interview.loadHistory(cid)
     resume.load(cid)

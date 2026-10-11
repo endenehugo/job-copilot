@@ -4,8 +4,10 @@ import { ref } from 'vue'
 
 const open = ref(false)
 
-const RISK_CLASS = { low: 'risk-low', medium: 'risk-medium', high: 'risk-high' }
-const RISK_TEXT = { low: '幻觉风险：低', medium: '幻觉风险：中', high: '幻觉风险：高' }
+// unknown = 验证没跑成或没执行。绝不能兜底成 low（绿），否则"未验证"会被
+// 当成"已验证且可信"展示——界面会主动误导用户。
+const RISK_CLASS = { low: 'risk-low', medium: 'risk-medium', high: 'risk-high', unknown: 'risk-unknown' }
+const RISK_TEXT = { low: '幻觉风险：低', medium: '幻觉风险：中', high: '幻觉风险：高', unknown: '未验证' }
 
 // 三种重排策略的 score 语义不同，分开表述，避免把序位当相关性分数
 function fmtScore(s) {
@@ -21,8 +23,12 @@ function fmtScore(s) {
       <span class="source-toggle" @click="open = !open">
         {{ open ? '▾' : '▸' }} 参考来源（{{ sources?.length || 0 }}）
       </span>
-      <span v-if="verification" :class="['risk-badge', RISK_CLASS[verification.hallucination_risk] || 'risk-low']">
-        {{ RISK_TEXT[verification.hallucination_risk] || '' }}
+      <span
+        v-if="verification"
+        :class="['risk-badge', RISK_CLASS[verification.hallucination_risk] || 'risk-unknown']"
+        :title="verification.verification_detail || ''"
+      >
+        {{ RISK_TEXT[verification.hallucination_risk] || '未验证' }}
       </span>
     </div>
     <template v-if="open">

@@ -23,8 +23,14 @@ export const useChatStore = defineStore('chat', {
     messages: [],
     pendingImages: [], // {url}
     sending: false,
+    streamController: null, // AbortController，用于"停止生成"与会话切换时中断接收
   }),
   actions: {
+    stopStreaming() {
+      // 只中断前端接收；后端会继续生成并落库，之后切回该会话能看到完整回答
+      this.streamController?.abort()
+      this.streamController = null
+    },
     loadFromDetail(detail) {
       this.messages = (detail?.messages || []).map((m) => ({ role: m.role, content: m.content }))
       this.pendingImages = []
@@ -111,6 +117,8 @@ export const useChatStore = defineStore('chat', {
       this.messages.push(assistantMsg)
 
       try {
+        const controller = new AbortController()
+        this.streamController = controller
         const resp = await fetch('/api/v1/conversation/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -120,6 +128,7 @@ export const useChatStore = defineStore('chat', {
             mode: 'agent',
             image_urls: images,
           }),
+          signal: controller.signal,
         })
         if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`)
 
@@ -170,10 +179,16 @@ export const useChatStore = defineStore('chat', {
         await conv.loadList()
       } catch (err) {
         assistantMsg.streaming = false
-        if (!assistantMsg.content) {
+        if (err.name === 'AbortError') {
+          // 用户主动停止：不算错误，保留已生成的部分
+          if (assistantMsg.content.trim()) {
+            assistantMsg.content += '\n\n*(已停止生成，后端仍会生成完整回答并存入历史)*'
+          }
+        } else if (!assistantMsg.content) {
           assistantMsg.content = `**出错了**：${err.message}`
         }
       } finally {
+        this.streamController = null
         this.sending = false
       }
     },

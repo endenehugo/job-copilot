@@ -27,13 +27,31 @@ export function humanizeError(error) {
   return error.response.data?.message || error.response.data?.detail || error.message || '操作失败'
 }
 
+// 降级提示：后端在结果可信度受损时（验证没跑成、模型漏字段、重排降级等）带
+// degraded/warnings。集中在这里提示，各组件就不必各自判断——否则每加一处降级
+// 就要改一个组件，永远补不完。
+const degradedShown = new Set()
+function warnIfDegraded(body) {
+  if (!body.degraded && !body.warnings?.length) return
+  const text =
+    (body.warnings || []).filter(Boolean).join('；') || '部分功能降级，结果可能不完整'
+  // 同一条提示短时间内重复出现会变成轰炸（例如连续多轮对话都降级）
+  if (degradedShown.has(text)) return
+  degradedShown.add(text)
+  setTimeout(() => degradedShown.delete(text), 10000)
+  ElMessage({ type: 'warning', message: text, duration: 6000 })
+}
+
 function attachInterceptors(instance) {
   instance.interceptors.response.use(
     (response) => {
       const body = response.data
       if (body && typeof body === 'object' && 'code' in body) {
         // 后端契约：code === 'success' 为成功；错误时 code 为 HTTP 语义整数（400/404/500）
-        if (body.code === 'success') return body
+        if (body.code === 'success') {
+          warnIfDegraded(body)
+          return body
+        }
         const err = new Error(body.message || '请求失败')
         err.code = body.code
         err.data = body.data

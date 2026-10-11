@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { knowledgeApi } from '../api'
+import { knowledgeApi, notifyError } from '../api'
 
 export const useKnowledgeStore = defineStore('knowledge', {
   state: () => ({
@@ -16,8 +16,10 @@ export const useKnowledgeStore = defineStore('knowledge', {
       try {
         const res = await knowledgeApi.status()
         this.status = res.data
-      } catch {
+      } catch (err) {
+        // 状态置空会让面板显示成"未建索引"，把服务故障伪装成正常状态
         this.status = null
+        notifyError(err, '知识库状态加载失败')
       }
     },
     async rebuild() {

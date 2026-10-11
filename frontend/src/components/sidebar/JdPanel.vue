@@ -36,6 +36,7 @@ const jd = computed(() => {
       strengths: raw.strengths || [],
       gaps: raw.gaps || [],
       suggestions: raw.suggestions || [],
+      warnings: raw.warnings || [],
     }),
   }
 })
@@ -113,6 +114,12 @@ async function onShotChange(e) {
       <div class="jd-head">
         <span class="jd-role">{{ jd.jobRole || '岗位未识别' }}</span>
         <span v-if="jd.scoring?.total_score != null" class="jd-score">{{ jd.scoring.total_score }}<small>分</small></span>
+        <!-- 总分缺失时明确说"未评分"：留白会被当成加载失败，显示 0 分则是把"模型没返回"说成"你 0 分" -->
+        <span v-else-if="jd.scoring" class="jd-score jd-score-unknown">未评分</span>
+      </div>
+
+      <div v-if="jd.scoring?.warnings?.length" class="jd-warn">
+        ⚠ {{ jd.scoring.warnings.join('；') }}
       </div>
 
       <div v-if="dimensions.length" class="jd-dims">
@@ -178,6 +185,18 @@ async function onShotChange(e) {
 .jd-score small {
   font-size: 11px;
   margin-left: 1px;
+}
+/* 未评分：灰色，与蓝色真实分数区分开 */
+.jd-score-unknown {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--el-text-color-secondary);
+}
+.jd-warn {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--el-color-warning);
+  line-height: 1.5;
 }
 .jd-dims {
   margin-top: 8px;

@@ -45,7 +45,7 @@ async function onDelete() {
       { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
     )
   } catch {
-    return
+    return // 用户点了取消，不是错误
   }
   try {
     await store.remove(cid)

@@ -39,7 +39,7 @@ async function onRemove(doc) {
   try {
     await ElMessageBox.confirm(`确定删除文档「${doc.original_name}」？`, '提示', { type: 'warning' })
   } catch {
-    return
+    return // 用户点了取消，不是错误
   }
   try {
     await documentApi.remove(doc.document_id)

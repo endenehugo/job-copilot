@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { jobApi, resumeApi } from '../api'
+import { jobApi, resumeApi, notifyError } from '../api'
 import { useConversationStore } from './conversation'
 
 export const useAnalysisStore = defineStore('analysis', {
@@ -18,8 +18,10 @@ export const useAnalysisStore = defineStore('analysis', {
       try {
         const res = await jobApi.latest(cid)
         this.analysis = res.data
-      } catch {
-        // 暂无分析记录，保持为空
+      } catch (err) {
+        // 404 = 该会话还没分析过，是正常空态；其他失败必须提示，
+        // 否则"加载失败"和"没分析过"在界面上长得一模一样
+        if (err.code !== 404) notifyError(err, '历史分析加载失败')
       }
     },
     async analyze() {
