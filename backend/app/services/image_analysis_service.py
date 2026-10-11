@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 
 from langchain_community.chat_models import ChatTongyi
+from app.core.llm_factory import build_chat_llm
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.core.config import settings
@@ -56,7 +57,7 @@ class ImageAnalysisService:
 
     def _ensure_vl_llm(self) -> ChatTongyi:
         if self._vl_llm is None:
-            self._vl_llm = ChatTongyi(
+            self._vl_llm = build_chat_llm(
                 model=settings.multimodal_model,
                 temperature=0.3,
                 top_p=0.7,

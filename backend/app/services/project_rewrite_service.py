@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 
 from langchain_community.chat_models import ChatTongyi
+from app.core.llm_factory import build_chat_llm
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.core.config import settings
@@ -46,7 +47,7 @@ class ProjectRewriteService:
 
     def _ensure_llm(self) -> ChatTongyi:
         if self._llm is None:
-            self._llm = ChatTongyi(
+            self._llm = build_chat_llm(
                 model=settings.llm_model,
                 temperature=0.4,
                 top_p=0.8,

@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 
 from langchain_community.chat_models import ChatTongyi
+from app.core.llm_factory import build_chat_llm
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.core.config import settings
@@ -93,7 +94,7 @@ class InterviewSimulationService:
 
     def _ensure_start_llm(self) -> ChatTongyi:
         if self._start_llm is None:
-            self._start_llm = ChatTongyi(
+            self._start_llm = build_chat_llm(
                 model=settings.llm_model,
                 temperature=0.5,
                 top_p=0.8,
@@ -102,7 +103,7 @@ class InterviewSimulationService:
 
     def _ensure_answer_llm(self) -> ChatTongyi:
         if self._answer_llm is None:
-            self._answer_llm = ChatTongyi(
+            self._answer_llm = build_chat_llm(
                 model=settings.llm_model,
                 temperature=0.4,
                 top_p=0.7,

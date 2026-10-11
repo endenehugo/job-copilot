@@ -282,8 +282,8 @@ class ContextVerificationService:
 
     def _get_llm(self):
         if self._verifier_llm is None:
-            from langchain_community.chat_models import ChatTongyi
-            self._verifier_llm = ChatTongyi(
+            from app.core.llm_factory import build_chat_llm
+            self._verifier_llm = build_chat_llm(
                 model="qwen-plus",
                 temperature=0.1,
                 top_p=0.3,

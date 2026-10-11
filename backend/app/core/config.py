@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     llm_model: str = "qwen-plus"
     multimodal_model: str = "qwen-vl-plus"
 
+    # DashScope 默认超时 300 秒、ChatTongyi 默认 max_retries=10，
+    # 两者相乘让单次调用最坏可达 50 分钟。所有 LLM 调用统一走
+    # core/llm_factory.build_chat_llm，由这里集中控制。
+    llm_request_timeout: int = 60
+    llm_stream_timeout: int = 180
+    llm_max_retries: int = 2
+
     mysql_host: str = "127.0.0.1"
     mysql_port: int = 3306
     mysql_user: str = "root"
@@ -52,6 +59,16 @@ class Settings(BaseSettings):
 
     conversation_index_chunk_size: int = 700
     conversation_index_chunk_overlap: int = 120
+
+    # 检索重排策略：listwise | per_doc | rrf | off
+    # 实测（scripts/bench_rerank_v3.py，简历+电商混合文档、5 个 query）：
+    #   逐篇 per_doc 21.4s / 批量打分 9.7s / listwise 3.7s（5.8x，Top-4 重合 0.71）
+    # rrf 虽零耗时但 Top-4 重合仅 0.14~0.33——BM25 按字切分导致召回质量差，
+    # 而 RRF 不看 query-doc 语义，故只作 LLM 失败时的降级路径。
+    rerank_strategy: str = "listwise"
+    llm_rerank_max_docs: int = 10
+    llm_rerank_char_limit: int = 300
+    rerank_rrf_k: int = 60
 
     resources_root: str = str(_BACKEND_ROOT / "resources")
 

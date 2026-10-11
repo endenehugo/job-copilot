@@ -41,7 +41,7 @@ def build_agent_system_prompt() -> str:
         + skill_loader.catalog_prompt().replace("{", "{{").replace("}", "}}")
     )
 
-from langchain_community.chat_models import ChatTongyi
+from app.core.llm_factory import build_chat_llm
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
@@ -175,14 +175,18 @@ class ConversationChatService:
         }
 
     def chat_stream(self, conversation_id: str, query: str, mode: str = "agent", image_urls: list[str] | None = None):
-        """流式问答生成器，产出 SSE 事件：meta -> delta* -> sources -> verification -> done。
+        """流式问答生成器，产出 SSE 事件：meta -> delta* -> sources -> files -> done -> verification。
+
+        注意 verification 排在 done 之后：上下文校验要再跑一次 LLM（实测 3~8 秒），
+        放在 done 前会让用户盯着"字已打完但没结束"的界面干等。引用标注依赖
+        完整回答，因此随 verification 事件补发 cited_answer，由前端覆盖已显示的内容。
 
         流式策略：
         - 首轮流式（bind_tools 状态下模型请求工具时通常无文本输出，delta 为空不影响前端）；
         - 首轮即给出答案（绝大多数请求）：token 级流式；
         - 命中工具：工具轮与最终回答走非流式，最终回答整段下发一次；
         - 多模态：整段下发；
-        - 校验与引用标注依赖完整回答，在 done 前一次性下发。
+        - 校验与引用标注依赖完整回答，在 done 之后补发（不阻塞用户看到回答）。
         """
         (
             normalized_mode,
@@ -221,6 +225,8 @@ class ConversationChatService:
                             yield {"event": "delta", "data": {"text": chunk.content}}
                 except Exception as exc:
                     logger.warning("流式生成异常: %s", exc)
+                    # 旧代码只写日志，前端收不到 error 事件，界面会静默显示残缺回答
+                    yield {"event": "error", "data": {"message": "生成过程中断，已保留已生成的部分内容"}}
 
                 if merged is not None and merged.tool_calls:
                     messages = list(prompt_messages)
@@ -238,35 +244,39 @@ class ConversationChatService:
 
         answer = answer or "抱歉，我暂时无法生成回答。"
 
-        verification_result = None
-        cited_answer = answer
-        if context and normalized_mode != "memory":
-            try:
-                verify_report = self.context_verification_service.generate_verification_report(
-                    answer, context, source_docs
-                )
-                verification_result = verify_report["verification"]
-                cited_answer = verify_report["cited_answer"]
-            except Exception as exc:
-                logger.warning("上下文验证异常，跳过: %s", exc)
-
         # 与非流式一致：持久化原始回答（不含引用标记）
         self.conversation_store_service.append_message_pair(conversation_id, user_content, answer, normalized_mode)
         detail = self.conversation_store_service.get_conversation_detail(conversation_id)
 
+        # done 先发：验证还要跑一次 LLM（实测 3~8 秒），不能让它挡在回答前面
         yield {"event": "sources", "data": {"sources": source_docs}}
-        yield {"event": "verification", "data": {"verification": verification_result}}
         if files:
             yield {"event": "files", "data": {"files": files}}
         yield {
             "event": "done",
             "data": {
-                "answer": cited_answer,
+                # 引用标注依赖完整回答，随 verification 事件补发
+                "answer": answer,
                 "original_answer": answer,
                 "conversation": detail,
                 "files": files,
             },
         }
+
+        if context and normalized_mode != "memory":
+            try:
+                verify_report = self.context_verification_service.generate_verification_report(
+                    answer, context, source_docs
+                )
+                yield {
+                    "event": "verification",
+                    "data": {
+                        "verification": verify_report["verification"],
+                        "cited_answer": verify_report["cited_answer"],
+                    },
+                }
+            except Exception as exc:
+                logger.warning("上下文验证异常，跳过: %s", exc)
 
     def _run_tool_rounds(self, messages: list) -> tuple[str, list[dict]]:
         """首轮流式命中工具调用后，继续执行工具轮并返回（最终回答，本轮落盘的文件产物）。"""
@@ -303,13 +313,13 @@ class ConversationChatService:
         if self.qa_llm is not None:
             return
 
-        self.qa_llm = ChatTongyi(
+        self.qa_llm = build_chat_llm(
             streaming=True,
             model="qwen-plus",
             temperature=0.8,
             top_p=0.7,
         )
-        self.vl_llm = ChatTongyi(
+        self.vl_llm = build_chat_llm(
             model=settings.multimodal_model,
             temperature=0.7,
         )

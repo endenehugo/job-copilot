@@ -17,6 +17,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.core.config import settings
 from app.core.json_utils import parse_llm_json
+from app.core.llm_factory import build_chat_llm
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +110,7 @@ class KnowledgeReviewService:
 
     def _invoke_llm(self, system: str, user: str) -> str:
         if self._llm is None:
-            self._llm = ChatTongyi(
+            self._llm = build_chat_llm(
                 model=settings.llm_model,
                 temperature=0.1,  # 审核判定要稳定，低温
                 top_p=0.7,

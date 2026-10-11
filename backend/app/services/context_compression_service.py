@@ -210,8 +210,8 @@ class ContextCompressionService:
 
     def _get_llm(self):
         if self._compressor_llm is None:
-            from langchain_community.chat_models import ChatTongyi
-            self._compressor_llm = ChatTongyi(
+            from app.core.llm_factory import build_chat_llm
+            self._compressor_llm = build_chat_llm(
                 model="qwen-plus",
                 temperature=0.3,
                 top_p=0.5,
