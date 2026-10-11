@@ -48,23 +48,26 @@ export const useChatStore = defineStore('chat', {
     },
     async send(query) {
       const conv = useConversationStore()
-      if (!conv.currentId) await conv.create()
       const images = this.pendingImages.map((img) => img.url)
       if (!query.trim() && images.length === 0) {
         throw new Error('请输入问题或上传图片')
       }
-
-      const userContent = [
-        ...this.pendingImages.map((img) => `![image](${img.url})`),
-        query.trim(),
-      ]
-        .filter(Boolean)
-        .join('\n')
-
-      this.messages.push({ role: 'user', content: userContent })
-      this.pendingImages = []
+      // 防连点：置位必须在任何 await 之前，否则 create 的数秒窗口内可重复发送
+      if (this.sending) return
       this.sending = true
       try {
+        if (!conv.currentId) await conv.create()
+
+        const userContent = [
+          ...this.pendingImages.map((img) => `![image](${img.url})`),
+          query.trim(),
+        ]
+          .filter(Boolean)
+          .join('\n')
+
+        this.messages.push({ role: 'user', content: userContent })
+        this.pendingImages = []
+
         const res = await conversationApi.chat({
           conversation_id: conv.currentId,
           query,
@@ -78,31 +81,22 @@ export const useChatStore = defineStore('chat', {
           verification: res.data.verification,
           files: res.data.files || null,
         })
-        // 同步会话标题/预览
-        await conv.loadList()
       } catch (err) {
         this.messages.push({ role: 'assistant', content: `**出错了**：${err.message}` })
       } finally {
         this.sending = false
       }
+      // 同步会话标题/预览：不阻塞下一次发送；失败不影响刚收到的回答
+      conv.loadList().catch(() => {})
     },
     async sendStream(query) {
       const conv = useConversationStore()
-      if (!conv.currentId) await conv.create()
       const images = this.pendingImages.map((img) => img.url)
       if (!query.trim() && images.length === 0) {
         throw new Error('请输入问题或上传图片')
       }
-
-      const userContent = [
-        ...this.pendingImages.map((img) => `![image](${img.url})`),
-        query.trim(),
-      ]
-        .filter(Boolean)
-        .join('\n')
-
-      this.messages.push({ role: 'user', content: userContent })
-      this.pendingImages = []
+      // 防连点：置位必须在 await conv.create() 之前
+      if (this.sending) return
       this.sending = true
 
       // reactive 包裹后，流式追加才能实时驱动视图更新
@@ -114,9 +108,21 @@ export const useChatStore = defineStore('chat', {
         files: null,
         streaming: true,
       })
-      this.messages.push(assistantMsg)
 
       try {
+        if (!conv.currentId) await conv.create()
+
+        const userContent = [
+          ...this.pendingImages.map((img) => `![image](${img.url})`),
+          query.trim(),
+        ]
+          .filter(Boolean)
+          .join('\n')
+
+        this.messages.push({ role: 'user', content: userContent })
+        this.pendingImages = []
+        this.messages.push(assistantMsg)
+
         const controller = new AbortController()
         this.streamController = controller
         const resp = await fetch('/api/v1/conversation/chat/stream', {
@@ -149,6 +155,9 @@ export const useChatStore = defineStore('chat', {
             if (!event) continue
             if (event.event === 'delta') {
               assistantMsg.content += event.data.text || ''
+            } else if (event.event === 'tool_status') {
+              // agent 工具链进度：替换式更新，气泡内显示当前正在执行的工具
+              assistantMsg.toolStatus = event.data
             } else if (event.event === 'sources') {
               assistantMsg.sources = event.data.sources
             } else if (event.event === 'verification') {
@@ -160,6 +169,11 @@ export const useChatStore = defineStore('chat', {
             } else if (event.event === 'done') {
               assistantMsg.content = event.data.answer || assistantMsg.content
               if (event.data.files) assistantMsg.files = event.data.files
+              if (event.data.warnings && event.data.warnings.length) {
+                // 工具链异常结束（轮次耗尽/工具失败）：气泡内提示，不当成正常回答
+                assistantMsg.degraded = true
+                assistantMsg.warnings = event.data.warnings
+              }
               assistantMsg.streaming = false
             } else if (event.event === 'error') {
               streamError = event.data.message
@@ -176,9 +190,15 @@ export const useChatStore = defineStore('chat', {
             assistantMsg.content = `**出错了**：${streamError}`
           }
         }
-        await conv.loadList()
+        // 会话列表（标题/预览）非阻塞刷新：之前在 try 内 await，失败会被 catch
+        // 误当成流式错误，把已生成的回答覆盖成"出错了"
+        conv.loadList().catch(() => {})
       } catch (err) {
         assistantMsg.streaming = false
+        if (!this.messages.includes(assistantMsg)) {
+          // 建会话阶段就失败、气泡尚未上屏：交还调用方提示（Composer 的 notifyError）
+          throw err
+        }
         if (err.name === 'AbortError') {
           // 用户主动停止：不算错误，保留已生成的部分
           if (assistantMsg.content.trim()) {

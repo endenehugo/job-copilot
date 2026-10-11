@@ -1,7 +1,8 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { notifyError } from '../../api'
+import { exportApi, jobApi, notifyError } from '../../api'
+import { downloadMarkdown } from '../../utils/clipboard'
 import { useAnalysisStore } from '../../stores/analysis'
 import { useChatStore } from '../../stores/chat'
 import { useConversationStore } from '../../stores/conversation'
@@ -10,6 +11,7 @@ const analysis = useAnalysisStore()
 const chat = useChatStore()
 const conv = useConversationStore()
 const shotInput = ref(null)
+const exporting = ref(false)
 
 const DIMENSION_LABELS = {
   skill_match: '技能匹配',
@@ -66,6 +68,27 @@ async function onAnalyze() {
   }
 }
 
+async function onExport() {
+  exporting.value = true
+  try {
+    // /job/analyze 响应带 analysis_id；历史记录里字段叫 id
+    let aid = analysis.analysis?.analysis_id ?? analysis.analysis?.id
+    if (!aid && conv.currentId) {
+      // 兜底：拉一次最新分析取 id
+      const latest = await jobApi.latest(conv.currentId)
+      aid = latest.data?.id
+    }
+    if (!aid) throw new Error('找不到可导出的分析记录，请先完成一次 JD 分析')
+    const res = await exportApi.analysis(aid)
+    downloadMarkdown(`JD分析_${jd.value?.jobRole || '未命名岗位'}`, res.data.markdown)
+    ElMessage.success('已导出 Markdown')
+  } catch (err) {
+    notifyError(err)
+  } finally {
+    exporting.value = false
+  }
+}
+
 function pickShot() {
   if (!conv.currentId) {
     notifyError(new Error('请先新建或选择一个会话'))
@@ -108,9 +131,11 @@ async function onShotChange(e) {
     <div style="display: flex; gap: 8px; margin-top: 8px">
       <el-button type="primary" size="small" :loading="analysis.analyzing" @click="onAnalyze">开始分析</el-button>
       <el-button size="small" :loading="analysis.analyzing" @click="pickShot">📷 招聘截图分析</el-button>
+      <el-button size="small" :loading="exporting" :disabled="!jd" @click="onExport">导出 MD</el-button>
     </div>
 
-    <div v-if="jd" class="jd-result">
+    <!-- B29：分析可达十几秒，按钮转圈在折叠面板里看不见，主区必须有意図性反馈 -->
+    <div v-if="jd" v-loading="analysis.analyzing" class="jd-result" element-loading-text="正在分析 JD 与简历匹配度…">
       <div class="jd-head">
         <span class="jd-role">{{ jd.jobRole || '岗位未识别' }}</span>
         <span v-if="jd.scoring?.total_score != null" class="jd-score">{{ jd.scoring.total_score }}<small>分</small></span>

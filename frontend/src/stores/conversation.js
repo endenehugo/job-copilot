@@ -7,6 +7,8 @@ export const useConversationStore = defineStore('conversation', {
     currentId: '',
     detail: null,
     loading: false,
+    // select 请求序号：快速点 A→B 时丢弃 A 的过期响应，避免"高亮 B、内容 A"
+    selectSeq: 0,
   }),
   getters: {
     current: (s) => s.conversations.find((c) => c.conversation_id === s.currentId) || null,
@@ -19,20 +21,25 @@ export const useConversationStore = defineStore('conversation', {
     },
     async create() {
       const res = await conversationApi.create({ title: '新对话', mode: 'agent' })
-      await this.loadList()
-      await this.select(res.data.conversation_id)
+      // 列表刷新与详情加载互不依赖，串行会多等一个往返
+      await Promise.all([this.loadList(), this.select(res.data.conversation_id)])
       return res.data.conversation_id
     },
     async select(id) {
+      const seq = ++this.selectSeq
       this.loading = true
       this.currentId = id
       this.detail = null
       try {
         const res = await conversationApi.detail(id)
+        if (seq !== this.selectSeq) {
+          // 过期响应：期间用户已切到别的会话，detail 由最新请求负责赋值
+          return null
+        }
         this.detail = res.data
         return res.data
       } finally {
-        this.loading = false
+        if (seq === this.selectSeq) this.loading = false
       }
     },
     async refreshDetail() {

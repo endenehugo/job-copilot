@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { onBeforeUnmount, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete } from '@element-plus/icons-vue'
 import { documentApi, notifyError } from '../../api'
@@ -10,6 +10,39 @@ const conv = useConversationStore()
 const resume = useResumeStore()
 const fileInput = ref(null)
 const uploading = ref(false)
+// B46：上传后文档多为 pending，需要轮询等索引建立完成
+let pollTimer = null
+let pollCount = 0
+
+const MAX_DOC_SIZE = 20 * 1024 * 1024 // 20MB
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+function startPolling() {
+  stopPolling()
+  pollCount = 0
+  pollTimer = setInterval(async () => {
+    pollCount += 1
+    const docs = conv.documents
+    const pending = docs.some((d) => d.status !== 'indexed' && d.status !== 'failed')
+    if (!pending || pollCount >= 10) {
+      stopPolling()
+      return
+    }
+    try {
+      await conv.refreshDetail()
+    } catch {
+      stopPolling() // 网络异常时不再空转
+    }
+  }, 3000)
+}
+
+onBeforeUnmount(stopPolling)
 
 function pick() {
   fileInput.value.click()
@@ -19,15 +52,24 @@ async function onFileChange(e) {
   const file = e.target.files[0]
   e.target.value = ''
   if (!file) return
+  // B31：空文件/超限直接提示，不发请求
+  if (file.size === 0) {
+    ElMessage.warning('不能上传空文件')
+    return
+  }
+  if (file.size > MAX_DOC_SIZE) {
+    ElMessage.warning('文档大小不能超过 20MB')
+    return
+  }
   uploading.value = true
   try {
     const form = new FormData()
     form.append('conversation_id', conv.currentId)
     form.append('file', file)
     await documentApi.upload(form)
-    ElMessage.success('上传成功，已建立索引')
-    await conv.refreshDetail()
-    await resume.load(conv.currentId)
+    ElMessage.success('上传成功，索引建立中…')
+    await Promise.all([conv.refreshDetail(), resume.load(conv.currentId)])
+    startPolling() // 轮询直到 indexed/failed
   } catch (err) {
     notifyError(err)
   } finally {
@@ -44,8 +86,7 @@ async function onRemove(doc) {
   try {
     await documentApi.remove(doc.document_id)
     ElMessage.success('已删除')
-    await conv.refreshDetail()
-    await resume.load(conv.currentId)
+    await Promise.all([conv.refreshDetail(), resume.load(conv.currentId)])
   } catch (err) {
     notifyError(err)
   }

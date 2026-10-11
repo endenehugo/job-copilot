@@ -1,12 +1,14 @@
 <script setup>
-import { onMounted, watch } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { notifyError } from '../../api'
+import { exportApi, notifyError } from '../../api'
+import { downloadMarkdown } from '../../utils/clipboard'
 import { useInterviewStore } from '../../stores/interview'
 import { useConversationStore } from '../../stores/conversation'
 
 const interview = useInterviewStore()
 const conv = useConversationStore()
+const exportingId = ref('')
 
 const DIRECTION_LABEL = {
   general: '通用方向',
@@ -33,6 +35,20 @@ async function onSubmit() {
 
 function onEnd() {
   interview.closeSession()
+}
+
+async function onExport(sessionId) {
+  if (!sessionId) return
+  exportingId.value = sessionId
+  try {
+    const res = await exportApi.interview(sessionId)
+    downloadMarkdown(`面试记录_${sessionId}`, res.data.markdown)
+    ElMessage.success('已导出 Markdown')
+  } catch (err) {
+    notifyError(err)
+  } finally {
+    exportingId.value = ''
+  }
 }
 
 async function onOpenTranscript(sessionId) {
@@ -85,11 +101,19 @@ onMounted(() => interview.loadHistory(conv.currentId))
           面试回放 ·
           {{ DIRECTION_LABEL[interview.transcript.session?.direction] || interview.transcript.session?.direction || '—' }}
         </span>
-        <el-button size="small" @click="onCloseTranscript">返回</el-button>
+        <span style="display: flex; gap: 6px">
+          <el-button
+            v-if="interview.transcript.session"
+            size="small"
+            :loading="exportingId === interview.transcript.session.session_id"
+            @click="onExport(interview.transcript.session.session_id)"
+          >导出</el-button>
+          <el-button size="small" @click="onCloseTranscript">返回</el-button>
+        </span>
       </div>
       <div v-if="interview.transcript.session?.overall_summary" class="iv-summary">
         <div class="iv-summary-head">
-          总分 {{ interview.transcript.session.total_score ?? '—' }}
+          总分 {{ interview.transcript.session.total_score ?? '未评分' }}
         </div>
         <div>{{ interview.transcript.session.overall_summary }}</div>
       </div>
@@ -115,9 +139,12 @@ onMounted(() => interview.loadHistory(conv.currentId))
         <el-button size="small" @click="onEnd">结束</el-button>
       </div>
 
-      <div class="iv-question">
-        <span class="iv-label">面试官</span>
-        <span>{{ interview.currentQuestion || '（暂无题目）' }}</span>
+      <!-- B29：评估可达十几秒，主区 loading 而不是只有小字提示 -->
+      <div v-loading="interview.answering" element-loading-text="面试官评估中…">
+        <div class="iv-question">
+          <span class="iv-label">面试官</span>
+          <span>{{ interview.currentQuestion || '（暂无题目）' }}</span>
+        </div>
       </div>
 
       <template v-if="!interview.summary">
@@ -143,7 +170,7 @@ onMounted(() => interview.loadHistory(conv.currentId))
 
       <div v-else class="iv-summary">
         <div class="iv-summary-head">
-          面试结束 · 总分 {{ interview.summary.score ?? '—' }}
+          面试结束 · {{ interview.summary.score == null ? '未评分' : `总分 ${interview.summary.score}` }}
         </div>
         <div>{{ interview.summary.overall_summary || interview.summary.evaluation }}</div>
         <el-button size="small" style="margin-top: 8px" :loading="interview.starting" @click="onStart">
@@ -157,7 +184,10 @@ onMounted(() => interview.loadHistory(conv.currentId))
       <div v-for="(r, i) in interview.answeredRounds" :key="i" class="iv-round">
         <div class="iv-round-head">
           <span>第 {{ i + 1 }} 轮</span>
-          <el-tag size="small" :type="scoreTagType(r.score)">{{ r.score ?? '—' }} 分</el-tag>
+          <!-- score 为 null 表示模型没返回评分，不能显示成 0 分 -->
+          <el-tag size="small" :type="scoreTagType(r.score)">
+            {{ r.score == null ? '未评分' : `${r.score} 分` }}
+          </el-tag>
         </div>
         <div class="iv-round-text">{{ r.evaluation }}</div>
       </div>
@@ -192,9 +222,14 @@ onMounted(() => interview.loadHistory(conv.currentId))
         <span>
           {{ DIRECTION_LABEL[s.direction] || s.direction }} · {{ fmt(s.updated_at) }}
         </span>
-        <el-tag size="small" :type="s.status === 'completed' ? 'success' : 'info'">
-          {{ s.status === 'completed' ? `${s.total_score ?? '—'}分` : '进行中' }}
-        </el-tag>
+        <span style="display: flex; gap: 4px; align-items: center">
+          <el-button size="small" text :loading="exportingId === s.session_id" @click.stop="onExport(s.session_id)">
+            导出
+          </el-button>
+          <el-tag size="small" :type="s.status === 'completed' ? 'success' : 'info'">
+            {{ s.status === 'completed' ? `${s.total_score ?? '未评分'}分` : '进行中' }}
+          </el-tag>
+        </span>
       </div>
     </template>
   </div>

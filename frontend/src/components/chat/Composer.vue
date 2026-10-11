@@ -9,6 +9,7 @@ const chat = useChatStore()
 const conv = useConversationStore()
 const text = ref('')
 const imgInput = ref(null)
+const uploading = ref(false)
 
 async function send() {
   const query = text.value
@@ -39,15 +40,37 @@ function pickImage() {
   imgInput.value.click()
 }
 
+const MAX_IMAGE_SIZE = 10 * 1024 * 1024 // 10MB
+
 async function onImageChange(e) {
   const files = [...e.target.files]
   e.target.value = ''
+  if (!files.length) return
+  // B31：空文件/超限前端直接拦截，不发请求
+  const valid = []
   for (const file of files) {
-    try {
-      await chat.uploadImage(file)
-    } catch (err) {
-      notifyError(err)
+    if (file.size === 0) {
+      ElMessage.warning(`「${file.name}」是空文件，已跳过`)
+    } else if (file.size > MAX_IMAGE_SIZE) {
+      ElMessage.warning(`「${file.name}」超过 10MB 上限，已跳过`)
+    } else {
+      valid.push(file)
     }
+  }
+  if (!valid.length) return
+  uploading.value = true
+  try {
+    // 多图并行上传；单张失败只提示该张，不影响其余
+    await Promise.all(
+      valid.map((file) =>
+        chat.uploadImage(file).catch((err) => {
+          notifyError(err)
+          return null
+        })
+      )
+    )
+  } finally {
+    uploading.value = false
   }
 }
 </script>
@@ -71,10 +94,11 @@ async function onImageChange(e) {
       />
       <div class="composer-actions">
         <input ref="imgInput" type="file" accept="image/png,image/jpeg,image/webp" multiple style="display: none" @change="onImageChange" />
-        <el-button size="small" text @click="pickImage">🖼 图片</el-button>
+        <!-- 上传中禁用图片按钮，避免连点重复选图；发送也等上传结束 -->
+        <el-button size="small" text :loading="uploading" :disabled="uploading" @click="pickImage">🖼 图片</el-button>
         <span class="hint">Enter 发送 · Shift+Enter 换行</span>
         <el-button v-if="chat.sending" size="small" @click="chat.stopStreaming()">停止生成</el-button>
-        <el-button v-else type="primary" size="small" @click="send">发送</el-button>
+        <el-button v-else type="primary" size="small" :disabled="uploading" @click="send">发送</el-button>
       </div>
     </div>
   </div>
