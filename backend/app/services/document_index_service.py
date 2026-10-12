@@ -464,7 +464,7 @@ class DocumentIndexService:
             return candidates[:top_k]
 
         llm = build_chat_llm(
-            model="qwen-plus",
+            model=settings.llm_small_model,
             temperature=0.1,
             top_p=0.5,
         )
@@ -552,7 +552,7 @@ class DocumentIndexService:
         from app.core.llm_factory import build_chat_llm
 
         llm = build_chat_llm(
-            model="qwen-plus",
+            model=settings.llm_small_model,
             temperature=0.1,
             top_p=0.5,
         )

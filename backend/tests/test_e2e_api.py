@@ -150,6 +150,12 @@ def _mock_all_llm(_patch_db):
         patches.append(p)
 
     _do_patch("langchain_community.chat_models.ChatTongyi", return_value=mock_tongyi)
+    # app.core.llm_factory 在模块导入时就把 ChatTongyi 绑进了自己的命名空间，
+    # 只打上面那一处是否生效取决于导入顺序；导入顺序靠后时 FallbackChatModel
+    # 会继承到 Mock，构造时抛 StopIteration。这里补打工厂自己的符号，顺序无关。
+    _do_patch("app.core.llm_factory.FallbackChatModel", return_value=mock_tongyi)
+    # 这一代新模型走的是兼容模式客户端（ChatOpenAI），同样要拦，否则单测会真发网络请求
+    _do_patch("app.core.llm_factory.CompatibleFallbackChatModel", return_value=mock_tongyi)
     _do_patch("app.services.context_compression_service.ContextCompressionService._get_llm", return_value=mock_tongyi)
     _do_patch("app.services.context_verification_service.ContextVerificationService.generate_verification_report",
               return_value={"verification": {"risk_level": "low", "issues": []}, "cited_answer": _MOCK_ANSWER})

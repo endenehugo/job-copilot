@@ -21,6 +21,9 @@ langchain==0.3.25
 langchain-community==0.3.25
 langchain-core==0.3.86
 langchain-text-splitters==0.3.11
+# 百炼 OpenAI 兼容模式客户端：qwen3.x/3.8、deepseek-*、kimi-* 这些模型不在
+# langchain ChatTongyi 的原生 text-generation 端点白名单里，必须走兼容模式端点
+langchain-openai==0.3.35
 dashscope==1.25.12
 faiss-cpu==1.9.0.post1
 rank-bm25==0.2.2

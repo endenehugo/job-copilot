@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.core.config import settings
+
 import logging
 from dataclasses import dataclass
 
@@ -212,7 +214,7 @@ class ContextCompressionService:
         if self._compressor_llm is None:
             from app.core.llm_factory import build_chat_llm
             self._compressor_llm = build_chat_llm(
-                model="qwen-plus",
+                model=settings.llm_small_model,
                 temperature=0.3,
                 top_p=0.5,
             )

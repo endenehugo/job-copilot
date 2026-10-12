@@ -2,11 +2,12 @@
 
 面向求职场景的垂直 Agent 应用：JD 解析、简历评分、项目经历优化、模拟面试、内置面试知识库，以及基于简历/JD 的会话级 RAG 问答。
 
-- 后端：FastAPI + SQLAlchemy 2.0 + MySQL + LangChain（qwen-plus / qwen-vl-plus / text-embedding-v3 + FAISS + BM25 混合检索）
+- 后端：FastAPI + SQLAlchemy 2.0 + MySQL + LangChain（主模型 qwen3.8-max / 小模型 qwen3.8-flash / 多模态 qwen-vl-plus + text-embedding-v3 + FAISS + BM25 混合检索）
 - 前端：Vue 3 + Vite + Pinia + Element Plus（开发中）
 - 文档：接口文档由 FastAPI 自动生成，见 `/docs`
 
 > 项目正在从 Flask 单体原型（llmrag）向前后端分离架构迁移，核心服务层沿用原型中经过线上排障验证的实现。
+> 模型可换：清单见 `backend/app/core/config.py :: SELECTABLE_LLM_MODELS`，改 `.env` 的 `LLM_MODEL` 即可切换；这一代新模型（qwen3.8 系 / deepseek / kimi）走百炼 OpenAI 兼容模式，老模型走原生 ChatTongyi，由 `core/llm_factory` 按模型自动选择客户端。
 
 ## 快速启动
 
@@ -70,6 +71,17 @@ npm run dev   # http://localhost:5174（开发代理已指向 127.0.0.1:8018 后
 
   命中时只报文件名与模式名，**不回显匹配原文**，避免密钥进终端日志。
 - 站点本身没有账号体系，公网访问请用 Nginx Basic Auth 门禁：`sudo bash deploy/enable-basic-auth.sh`（详见 `deploy/部署指南.md` 第八章）。
+
+## 免费额度探测工具
+
+`tools/qwen_free_models/`（纯标准库，无需装依赖）：用阿里云 / 千问账号登录后，列出千问 AI 平台上**可以免费使用**的模型，并真实调用一次确认额度还能用。
+
+```bash
+python tools/qwen_free_models/qwen_free_models.py list --source bailian --limit 0 --verify
+python tools/qwen_free_models/qwen_free_models.py login      # 免 API Key 的 OAuth 设备码登录
+```
+
+免费额度两套体系相互独立：百炼 API Key 为**每模型约 100 万 tokens / 90 天（仅北京地域）**，千问 OAuth 登录为**每天 2000 次调用**。`--write-env .env` 可把实测可用的模型写回 `LLM_MODEL` / `LLM_SMALL_MODEL` / `LLM_FALLBACK_MODELS`，把各模型的独立额度串成降级链。用法与排障见 `tools/qwen_free_models/README.md`。
 
 ## 目录结构
 

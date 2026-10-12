@@ -361,7 +361,7 @@ class ConversationChatService:
 
         self.qa_llm = build_chat_llm(
             streaming=True,
-            model="qwen-plus",
+            model=settings.llm_model,
             temperature=0.8,
             top_p=0.7,
         )

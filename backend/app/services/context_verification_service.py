@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.core.config import settings
+
 import logging
 import re
 from dataclasses import dataclass
@@ -296,7 +298,7 @@ class ContextVerificationService:
         if self._verifier_llm is None:
             from app.core.llm_factory import build_chat_llm
             self._verifier_llm = build_chat_llm(
-                model="qwen-plus",
+                model=settings.llm_small_model,
                 temperature=0.1,
                 top_p=0.3,
             )
