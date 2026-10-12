@@ -1,0 +1,636 @@
+[
+  {
+    "model": "qwen-flash",
+    "name": "Qwen-Flash",
+    "capabilities": [
+      "Reasoning",
+      "TG"
+    ],
+    "context_window": 1000000,
+    "price_input": "1.2元/每百万tokens",
+    "price_output": "12元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "✅ 可用（0.4s，tokens in/out=9/1）",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen-flash-2025-07-28",
+    "name": "Qwen-Flash-2025-07-28",
+    "capabilities": [
+      "Reasoning",
+      "TG"
+    ],
+    "context_window": 1000000,
+    "price_input": "1.2元/每百万tokens",
+    "price_output": "12元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen-flash-character",
+    "name": "Qwen-Flash-Character",
+    "capabilities": [
+      "TG"
+    ],
+    "context_window": 8192,
+    "price_input": "0.25元/每百万tokens",
+    "price_output": "1.5元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen-max",
+    "name": "Qwen-Max",
+    "capabilities": [
+      "TG"
+    ],
+    "context_window": 32768,
+    "price_input": "2.4元/每百万tokens",
+    "price_output": "9.6元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen-plus",
+    "name": "Qwen-Plus",
+    "capabilities": [
+      "Reasoning",
+      "TG"
+    ],
+    "context_window": 1000000,
+    "price_input": "4.8元/每百万tokens",
+    "price_output": "48元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "✅ 可用（0.8s，tokens in/out=9/8）",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen-plus-2025-01-25",
+    "name": "Qwen-Plus-2025-01-25",
+    "capabilities": [
+      "TG"
+    ],
+    "context_window": 131072,
+    "price_input": "0.8元/每百万tokens",
+    "price_output": "2元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen-plus-2025-04-28",
+    "name": "Qwen-Plus-2025-04-28",
+    "capabilities": [
+      "Reasoning",
+      "TG"
+    ],
+    "context_window": 131072,
+    "price_input": "0.8元/每百万tokens",
+    "price_output": "2元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen-plus-2025-07-14",
+    "name": "Qwen-Plus-2025-07-14",
+    "capabilities": [
+      "Reasoning",
+      "TG"
+    ],
+    "context_window": 131072,
+    "price_input": "0.8元/每百万tokens",
+    "price_output": "2元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen-plus-2025-12-01",
+    "name": "Qwen-Plus-2025-12-01",
+    "capabilities": [
+      "TG",
+      "Reasoning"
+    ],
+    "context_window": 1000000,
+    "price_input": "4.8元/每百万tokens",
+    "price_output": "48元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen-plus-latest",
+    "name": "Qwen-Plus-Latest",
+    "capabilities": [
+      "Reasoning",
+      "TG"
+    ],
+    "context_window": 1000000,
+    "price_input": "4.8元/每百万tokens",
+    "price_output": "48元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3-vl-plus",
+    "name": "Qwen3-VL-Plus",
+    "capabilities": [
+      "VU",
+      "Reasoning"
+    ],
+    "context_window": 262144,
+    "price_input": "3元/每百万tokens",
+    "price_output": "30元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.5-122b-a10b",
+    "name": "Qwen3.5-122B-A10B",
+    "capabilities": [
+      "Reasoning",
+      "VU",
+      "TG"
+    ],
+    "context_window": 262144,
+    "price_input": "2元/每百万tokens",
+    "price_output": "16元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.5-27b",
+    "name": "Qwen3.5-27B",
+    "capabilities": [
+      "Reasoning",
+      "VU",
+      "TG"
+    ],
+    "context_window": 262144,
+    "price_input": "1.8元/每百万tokens",
+    "price_output": "14.4元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.5-35b-a3b",
+    "name": "Qwen3.5-35B-A3B",
+    "capabilities": [
+      "Reasoning",
+      "VU",
+      "TG"
+    ],
+    "context_window": 262144,
+    "price_input": "1.6元/每百万tokens",
+    "price_output": "12.8元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.5-397b-a17b",
+    "name": "Qwen3.5-397B-A17B",
+    "capabilities": [
+      "Reasoning",
+      "VU",
+      "TG"
+    ],
+    "context_window": 262144,
+    "price_input": "3元/每百万tokens",
+    "price_output": "18元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.5-flash",
+    "name": "Qwen3.5-Flash",
+    "capabilities": [
+      "Reasoning",
+      "TG",
+      "VU"
+    ],
+    "context_window": 1000000,
+    "price_input": "1.2元/每百万tokens",
+    "price_output": "12元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "✅ 可用（3.6s，tokens in/out=11/238）",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.5-flash-2026-02-23",
+    "name": "Qwen3.5-Flash-2026-02-23",
+    "capabilities": [
+      "VU",
+      "Reasoning",
+      "TG"
+    ],
+    "context_window": 1000000,
+    "price_input": "1.2元/每百万tokens",
+    "price_output": "12元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.5-plus",
+    "name": "Qwen3.5-Plus",
+    "capabilities": [
+      "TG",
+      "Reasoning",
+      "VU"
+    ],
+    "context_window": 1000000,
+    "price_input": "4元/每百万tokens",
+    "price_output": "24元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.5-plus-2026-02-15",
+    "name": "Qwen3.5-Plus-2026-02-15",
+    "capabilities": [
+      "Reasoning",
+      "VU",
+      "TG"
+    ],
+    "context_window": 1000000,
+    "price_input": "4元/每百万tokens",
+    "price_output": "24元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.5-plus-2026-04-20",
+    "name": "Qwen3.5-Plus-2026-04-20",
+    "capabilities": [
+      "VU",
+      "Reasoning",
+      "TG"
+    ],
+    "context_window": 1000000,
+    "price_input": "4元/每百万tokens",
+    "price_output": "24元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.6-27b",
+    "name": "Qwen3.6-27B",
+    "capabilities": [
+      "Reasoning",
+      "VU",
+      "TG"
+    ],
+    "context_window": 262144,
+    "price_input": "3元/每百万tokens",
+    "price_output": "18元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.6-35b-a3b",
+    "name": "Qwen3.6-35B-A3B",
+    "capabilities": [
+      "VU",
+      "TG",
+      "Reasoning"
+    ],
+    "context_window": 262144,
+    "price_input": "1.8元/每百万tokens",
+    "price_output": "10.8元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.6-flash",
+    "name": "Qwen3.6-Flash",
+    "capabilities": [
+      "Reasoning",
+      "VU",
+      "TG"
+    ],
+    "context_window": 1000000,
+    "price_input": "4.8元/每百万tokens",
+    "price_output": "28.8元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.6-flash-2026-04-16",
+    "name": "Qwen3.6-Flash-2026-04-16",
+    "capabilities": [
+      "Reasoning",
+      "VU",
+      "TG"
+    ],
+    "context_window": 1000000,
+    "price_input": "4.8元/每百万tokens",
+    "price_output": "28.8元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.6-plus",
+    "name": "Qwen3.6-Plus",
+    "capabilities": [
+      "Reasoning",
+      "VU",
+      "TG"
+    ],
+    "context_window": 1000000,
+    "price_input": "8元/每百万tokens",
+    "price_output": "48元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.6-plus-2026-04-02",
+    "name": "Qwen3.6-Plus-2026-04-02",
+    "capabilities": [
+      "VU",
+      "TG",
+      "Reasoning"
+    ],
+    "context_window": 1000000,
+    "price_input": "8元/每百万tokens",
+    "price_output": "48元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.7-flash",
+    "name": "Qwen3.7-Flash",
+    "capabilities": [
+      "TG",
+      "VU",
+      "Reasoning"
+    ],
+    "context_window": 1000000,
+    "price_input": "1.2元/每百万tokens",
+    "price_output": "4.8元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.7-flash-2026-07-15",
+    "name": "Qwen3.7-Flash-2026-07-15",
+    "capabilities": [
+      "TG",
+      "VU",
+      "Reasoning"
+    ],
+    "context_window": 1000000,
+    "price_input": "1.2元/每百万tokens",
+    "price_output": "4.8元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.7-max",
+    "name": "Qwen3.7-Max",
+    "capabilities": [
+      "Reasoning",
+      "TG"
+    ],
+    "context_window": 1000000,
+    "price_input": "12元/每百万tokens",
+    "price_output": "36元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.7-max-2026-05-17",
+    "name": "Qwen3.7-Max-2026-05-17",
+    "capabilities": [
+      "Reasoning",
+      "TG"
+    ],
+    "context_window": 1000000,
+    "price_input": "12元/每百万tokens",
+    "price_output": "36元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.7-max-2026-05-20",
+    "name": "Qwen3.7-Max-2026-05-20",
+    "capabilities": [
+      "Reasoning",
+      "TG"
+    ],
+    "context_window": 1000000,
+    "price_input": "12元/每百万tokens",
+    "price_output": "36元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.7-max-2026-06-08",
+    "name": "Qwen3.7-Max-2026-06-08",
+    "capabilities": [
+      "TG",
+      "VU",
+      "Reasoning"
+    ],
+    "context_window": 1000000,
+    "price_input": "12元/每百万tokens",
+    "price_output": "36元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.7-max-preview",
+    "name": "Qwen3.7-Max-Preview",
+    "capabilities": [
+      "TG",
+      "Reasoning"
+    ],
+    "context_window": 1000000,
+    "price_input": "12元/每百万tokens",
+    "price_output": "36元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.7-plus",
+    "name": "Qwen3.7-Plus",
+    "capabilities": [
+      "TG",
+      "Reasoning",
+      "VU"
+    ],
+    "context_window": 1000000,
+    "price_input": "6元/每百万tokens",
+    "price_output": "24元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.7-plus-2026-05-26",
+    "name": "Qwen3.7-Plus-2026-05-26",
+    "capabilities": [
+      "TG",
+      "Reasoning",
+      "VU"
+    ],
+    "context_window": 1000000,
+    "price_input": "6元/每百万tokens",
+    "price_output": "24元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.8-2.4t-a95b",
+    "name": "Qwen3.8-2.4T-A95B",
+    "capabilities": [
+      "TG"
+    ],
+    "context_window": 1000000,
+    "price_input": "12元/每百万tokens",
+    "price_output": "36元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.8-27b",
+    "name": "Qwen3.8-27B",
+    "capabilities": [
+      "TG",
+      "Reasoning",
+      "VU"
+    ],
+    "context_window": 1000000,
+    "price_input": "3元/每百万tokens",
+    "price_output": "12元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.8-flash",
+    "name": "Qwen3.8-Flash",
+    "capabilities": [
+      "TG",
+      "VU",
+      "Reasoning"
+    ],
+    "context_window": 1000000,
+    "price_input": "0.8元/每百万tokens",
+    "price_output": "2.7元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.8-max",
+    "name": "Qwen3.8-Max",
+    "capabilities": [
+      "Reasoning",
+      "VU",
+      "TG"
+    ],
+    "context_window": 1000000,
+    "price_input": "12元/每百万tokens",
+    "price_output": "36元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "qwen3.8-max-0902",
+    "name": "Qwen3.8-Max-0902",
+    "capabilities": [
+      "TG",
+      "VU",
+      "Reasoning"
+    ],
+    "context_window": 1000000,
+    "price_input": "12元/每百万tokens",
+    "price_output": "36元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  },
+  {
+    "model": "tongyi-intent-detect-v3",
+    "name": "意图分类模型",
+    "capabilities": [
+      "TG"
+    ],
+    "context_window": 8192,
+    "price_input": "0.4元/每百万tokens",
+    "price_output": "1元/每百万tokens",
+    "free_kind": "新人额度",
+    "free_note": "新人额度 约100万tokens/90天(北京)",
+    "verify": "",
+    "source": "bailian"
+  }
+]
