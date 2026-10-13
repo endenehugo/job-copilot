@@ -15,6 +15,14 @@ class ProjectRewriteRequest(BaseModel):
     project_description: str = ""
 
 
+class JobAnalysisDeleteRequest(BaseModel):
+    analysis_id: int = 0
+
+
+class ProjectRewriteDeleteRequest(BaseModel):
+    rewrite_id: int = 0
+
+
 class ScreenshotAnalyzeRequest(BaseModel):
     conversation_id: str = ""
     image_url: str = ""

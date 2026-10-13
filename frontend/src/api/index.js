@@ -26,10 +26,19 @@ export const jobApi = {
   analyzeScreenshot: (data) => longClient.post('/job/analyze-from-screenshot', data),
   latest: (conversationId) =>
     client.get('/job/analysis/latest', { params: { conversation_id: conversationId } }),
+  list: (conversationId) =>
+    client.get('/job/analysis/list', { params: { conversation_id: conversationId } }),
+  detail: (analysisId) => client.get('/job/analysis/detail', { params: { analysis_id: analysisId } }),
+  remove: (analysisId) => client.post('/job/analysis/delete', { analysis_id: analysisId }),
 }
 
 export const resumeApi = {
   rewrite: (data) => longClient.post('/resume/project/rewrite', data),
+  rewrites: (conversationId) =>
+    client.get('/resume/project/rewrites', { params: { conversation_id: conversationId } }),
+  rewriteDetail: (rewriteId) =>
+    client.get('/resume/project/rewrite/detail', { params: { rewrite_id: rewriteId } }),
+  removeRewrite: (rewriteId) => client.post('/resume/project/rewrite/delete', { rewrite_id: rewriteId }),
   versions: (conversationId) =>
     client.get('/resume/versions/list', { params: { conversation_id: conversationId } }),
   versionDetail: (versionId) =>
@@ -43,6 +52,7 @@ export const interviewApi = {
   answer: (data) => longClient.post('/interview/answer', data),
   list: (conversationId) => client.get('/interview/list', { params: { conversation_id: conversationId } }),
   detail: (sessionId) => client.get('/interview/detail', { params: { session_id: sessionId } }),
+  remove: (sessionId) => client.post('/interview/delete', { session_id: sessionId }),
 }
 
 export const knowledgeApi = {

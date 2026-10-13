@@ -19,7 +19,11 @@ from app.core.deps import (
 )
 from app.core.response import fail, ok
 from app.repositories import DatabaseManager, JobAnalysisRepository
-from app.schemas.job import JobAnalyzeRequest, ScreenshotAnalyzeRequest
+from app.schemas.job import (
+    JobAnalysisDeleteRequest,
+    JobAnalyzeRequest,
+    ScreenshotAnalyzeRequest,
+)
 from app.services.job_analysis_store_service import (
     analysis_entity_to_dict,
     build_analysis_response,
@@ -104,6 +108,48 @@ def list_job_analyses(conversation_id: str = Query(default="")) -> dict:
         return ok({"analyses": [analysis_entity_to_dict(item) for item in analysis_list]})
     finally:
         DatabaseManager.remove_session()
+
+
+@router.get("/job/analysis/detail")
+def job_analysis_detail(analysis_id: int = Query(default=0)) -> dict:
+    """单条分析全量回看（会话树子节点用），结构同 /job/analysis/latest。"""
+    if analysis_id <= 0:
+        return fail("analysis_id 参数不能为空", code=400)
+
+    session = DatabaseManager.get_session()
+    try:
+        analysis = JobAnalysisRepository.get_by_id(session, analysis_id)
+        if analysis is None:
+            return fail("分析记录不存在", code=404)
+        data = analysis_entity_to_dict(analysis)
+        # 回看时带上 JD 原文，主区视图可展示分析依据
+        data["jd_text"] = analysis.jd_text
+        return ok(data)
+    finally:
+        DatabaseManager.remove_session()
+
+
+@router.post("/job/analysis/delete")
+def delete_job_analysis(payload: JobAnalysisDeleteRequest) -> dict:
+    """删除单条分析记录，供会话树子节点操作。
+
+    删除策略（2026-10-13 评审定稿）：允许删除并由前端确认提示；
+    注意面试链路会实时读取"最新一条分析"的 jd_text，删除后该会话
+    面试追问将拿不到 JD，前端提示需覆盖这一点。
+    """
+    if payload.analysis_id <= 0:
+        return fail("analysis_id 参数不能为空", code=400)
+
+    session = DatabaseManager.get_session()
+    try:
+        with session.begin():
+            analysis = JobAnalysisRepository.get_by_id(session, payload.analysis_id)
+            if analysis is None:
+                return fail("分析记录不存在", code=404)
+            session.delete(analysis)
+    finally:
+        DatabaseManager.remove_session()
+    return ok({"analysis_id": payload.analysis_id}, message="分析记录已删除")
 
 
 @router.post("/job/analyze-from-screenshot")

@@ -54,9 +54,62 @@ class ConversationStoreService:
         session = self.database_manager.get_session()
         try:
             conversations = self.conversation_repository.list_recent(session, limit=limit)
-            return [self._conversation_to_dict(item) for item in conversations]
+            items = [self._conversation_to_dict(item) for item in conversations]
+            self._attach_tree_badges(session, items)
+            return items
         finally:
             session.close()
+
+    @staticmethod
+    def _attach_tree_badges(session, items: list[dict]) -> None:
+        """为会话列表附加三类子节点徽标（面试/JD 分析/项目优化）。
+
+        每类一条 GROUP BY 聚合查询，避免前端树形列表按会话逐个请求造成 N+1。
+        """
+        from sqlalchemy import case, func, select
+
+        from app.repositories import ProjectRewrite, ProjectRewriteRepository
+
+        ids = [item["conversation_id"] for item in items]
+        if not ids:
+            return
+
+        def _count_map(stmt_result):
+            return {cid: int(total or 0) for cid, total in stmt_result}
+
+        interview_rows = _count_map(session.execute(
+            select(
+                InterviewSession.conversation_id,
+                func.count(InterviewSession.id),
+            )
+            .where(InterviewSession.conversation_id.in_(ids))
+            .group_by(InterviewSession.conversation_id)
+        ).all())
+        ongoing_rows = _count_map(session.execute(
+            select(
+                InterviewSession.conversation_id,
+                func.sum(case((InterviewSession.status == "in_progress", 1), else_=0)),
+            )
+            .where(InterviewSession.conversation_id.in_(ids))
+            .group_by(InterviewSession.conversation_id)
+        ).all())
+        analysis_rows = _count_map(session.execute(
+            select(JobAnalysis.conversation_id, func.count(JobAnalysis.id))
+            .where(JobAnalysis.conversation_id.in_(ids))
+            .group_by(JobAnalysis.conversation_id)
+        ).all())
+        rewrite_rows = _count_map(session.execute(
+            select(ProjectRewrite.conversation_id, func.count(ProjectRewrite.id))
+            .where(ProjectRewrite.conversation_id.in_(ids))
+            .group_by(ProjectRewrite.conversation_id)
+        ).all())
+
+        for item in items:
+            cid = item["conversation_id"]
+            item["interview_count"] = interview_rows.get(cid, 0)
+            item["interview_in_progress"] = ongoing_rows.get(cid, 0)
+            item["analysis_count"] = analysis_rows.get(cid, 0)
+            item["rewrite_count"] = rewrite_rows.get(cid, 0)
 
     def get_conversation_detail(self, conversation_id: str) -> dict:
         session = self.database_manager.get_session()

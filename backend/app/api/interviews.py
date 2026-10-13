@@ -21,11 +21,16 @@ from app.core.deps import (
 from app.core.response import fail, ok
 from app.repositories import (
     DatabaseManager,
+    InterviewMessage,
     InterviewMessageRepository,
     InterviewSessionRepository,
     JobAnalysisRepository,
 )
-from app.schemas.interview import InterviewAnswerRequest, InterviewStartRequest
+from app.schemas.interview import (
+    InterviewAnswerRequest,
+    InterviewDeleteRequest,
+    InterviewStartRequest,
+)
 from app.services.interview_simulation_service import (
     MAX_INTERVIEW_ROUNDS,
     normalize_interview_evaluation,
@@ -287,6 +292,30 @@ def answer_interview(payload: InterviewAnswerRequest) -> dict:
         message="回答已记录",
         warnings=eval_warnings or None,
     )
+
+
+@router.post("/interview/delete")
+def delete_interview(payload: InterviewDeleteRequest) -> dict:
+    """删除单场面试（场次 + 全部问答消息），供会话树子节点操作。"""
+    from sqlalchemy import delete as sql_delete
+
+    session_id = payload.session_id.strip()
+    if not session_id:
+        return fail("session_id 参数不能为空", code=400)
+
+    session = DatabaseManager.get_session()
+    try:
+        with session.begin():
+            interview_session = InterviewSessionRepository.get_by_session_id(session, session_id)
+            if interview_session is None:
+                return fail("面试会话不存在", code=404)
+            session.execute(
+                sql_delete(InterviewMessage).where(InterviewMessage.session_id == session_id)
+            )
+            session.delete(interview_session)
+    finally:
+        DatabaseManager.remove_session()
+    return ok({"session_id": session_id}, message="面试记录已删除")
 
 
 @router.get("/interview/list")

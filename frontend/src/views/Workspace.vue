@@ -3,23 +3,23 @@ import { onMounted, watch } from 'vue'
 import { notifyError } from '../api'
 import { useChatStore } from '../stores/chat'
 import { useConversationStore } from '../stores/conversation'
-import { useAnalysisStore } from '../stores/analysis'
 import { useInterviewStore } from '../stores/interview'
 import { useResumeStore } from '../stores/resume'
+import { openStartDialog } from '../utils/startDialog'
 
 import ConversationList from '../components/sidebar/ConversationList.vue'
 import DocumentPanel from '../components/sidebar/DocumentPanel.vue'
-import JdPanel from '../components/sidebar/JdPanel.vue'
-import RewritePanel from '../components/sidebar/RewritePanel.vue'
-import InterviewSidebar from '../components/sidebar/InterviewSidebar.vue'
 import KnowledgePanel from '../components/sidebar/KnowledgePanel.vue'
 
 import MessageList from '../components/chat/MessageList.vue'
 import Composer from '../components/chat/Composer.vue'
+import InterviewView from '../components/interview/InterviewView.vue'
+import AnalysisResultView from '../components/analysis/AnalysisResultView.vue'
+import RewriteResultView from '../components/rewrite/RewriteResultView.vue'
+import StartWorkDialog from '../components/interview/StartWorkDialog.vue'
 
 const conv = useConversationStore()
 const chat = useChatStore()
-const analysis = useAnalysisStore()
 const interview = useInterviewStore()
 const resume = useResumeStore()
 
@@ -30,7 +30,14 @@ const CHIPS = [
   '模拟面试一般会问哪些项目深挖问题？',
 ]
 
-// 切换会话后：聊天从 detail 回放，其余各模块按会话维度刷新
+const ACTIVE_TITLES = {
+  interview: '🎤 模拟面试',
+  analysis: '📊 JD 分析',
+  rewrite: '✏️ 项目优化',
+}
+
+// 切换会话后：聊天从 detail 回放，简历版本等按会话维度刷新。
+// 分析/优化/面试子节点数据由树展开时懒加载，不随会话切换拉取。
 watch(
   () => conv.detail,
   (detail) => chat.loadFromDetail(detail)
@@ -39,8 +46,6 @@ watch(
   () => conv.currentId,
   (cid) => {
     chat.stopStreaming() // 旧会话的流式回答不再接收，避免后台空跑
-    analysis.loadLatest(cid)
-    interview.loadHistory(cid)
     resume.load(cid)
   }
 )
@@ -74,15 +79,6 @@ function sendChip(text) {
         <el-collapse-item title="📄 文档" name="doc">
           <DocumentPanel />
         </el-collapse-item>
-        <el-collapse-item title="🎯 JD 分析" name="jd">
-          <JdPanel />
-        </el-collapse-item>
-        <el-collapse-item title="✏️ 项目优化" name="rewrite">
-          <RewritePanel />
-        </el-collapse-item>
-        <el-collapse-item title="🎤 模拟面试" name="interview">
-          <InterviewSidebar />
-        </el-collapse-item>
         <el-collapse-item title="📚 知识库" name="kb">
           <KnowledgePanel />
         </el-collapse-item>
@@ -91,23 +87,65 @@ function sendChip(text) {
 
     <main class="workspace">
       <header class="topbar">
-        <span class="title">{{ conv.current?.title || 'Job Copilot' }}</span>
+        <span class="title">
+          {{ ACTIVE_TITLES[conv.activeType] ? `${ACTIVE_TITLES[conv.activeType]} · ${conv.current?.title || ''}` : conv.current?.title || 'Job Copilot' }}
+        </span>
         <span class="badge">FastAPI + Vue3 · LLM + RAG</span>
       </header>
 
       <div class="main-area">
-        <MessageList v-if="chat.messages.length" />
+        <!-- 子节点视图：面试 / JD 分析 / 项目优化 -->
+        <InterviewView v-if="conv.activeType === 'interview'" />
+        <AnalysisResultView v-else-if="conv.activeType === 'analysis'" />
+        <RewriteResultView v-else-if="conv.activeType === 'rewrite'" />
 
-        <section v-if="!chat.messages.length" class="welcome">
-          <h2>欢迎使用 Job Copilot</h2>
-          <p>上传简历 → 输入 JD → 查看匹配评分 → 优化项目 → 模拟面试</p>
-          <div class="chips">
-            <div v-for="c in CHIPS" :key="c" class="chip" @click="sendChip(c)">{{ c }}</div>
-          </div>
-        </section>
+        <!-- 聊天视图 -->
+        <template v-else>
+          <MessageList v-if="chat.messages.length" />
 
-        <Composer />
+          <section v-if="!chat.messages.length" class="welcome">
+            <h2>欢迎使用 Job Copilot</h2>
+            <p>上传简历 → 输入 JD → 查看匹配评分 → 优化项目 → 模拟面试</p>
+            <div class="chips">
+              <div v-for="c in CHIPS" :key="c" class="chip" @click="sendChip(c)">{{ c }}</div>
+            </div>
+            <!-- 发起任务入口：三入口对称（P5 决策），对话框由 StartWorkDialog 承载 -->
+            <div class="start-entry">
+              <div class="start-entry-title">或直接发起一场任务</div>
+              <div class="start-buttons">
+                <el-button type="primary" size="small" @click="openStartDialog('interview')">🎤 模拟面试</el-button>
+                <el-button type="primary" plain size="small" @click="openStartDialog('analysis')">📊 分析 JD</el-button>
+                <el-button type="primary" plain size="small" @click="openStartDialog('rewrite')">✏️ 优化项目</el-button>
+              </div>
+            </div>
+          </section>
+
+          <Composer />
+        </template>
       </div>
+
+      <StartWorkDialog />
     </main>
   </div>
 </template>
+
+<style scoped>
+.start-entry {
+  margin-top: 16px;
+  padding: 12px 16px;
+  border: 1px dashed var(--el-color-primary-light-5, #a0cfff);
+  border-radius: 8px;
+  background: var(--el-color-primary-light-9, #ecf5ff);
+}
+.start-entry-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--el-color-primary);
+}
+.start-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+</style>

@@ -138,6 +138,12 @@ def _mock_llm_stream(*args, **kwargs):
 @pytest.fixture(autouse=True)
 def _mock_all_llm(_patch_db):
     """Mock 所有 LLM 和外部服务调用。"""
+    # 先真实导入 app.main，让 FallbackChatModel / CompatibleFallbackChatModel
+    # 基于真 ChatTongyi 完成类定义，再打 ChatTongyi 的 Mock。
+    # 否则单跑本文件时工厂类会继承到 Mock，定义即抛元类冲突
+    # （全量跑套件时恰好被其他测试文件的真实导入掩盖，属于顺序脆弱点）。
+    from app.main import app  # noqa: F401
+
     mock_tongyi = MagicMock()
     mock_tongyi.invoke = _mock_llm_invoke
     mock_tongyi.stream = _mock_llm_stream
@@ -173,8 +179,10 @@ def _mock_all_llm(_patch_db):
               return_value=_MOCK_EVAL_RESULT)
 
     _do_patch("app.services.project_rewrite_service.ProjectRewriteService.rewrite",
-              return_value={"original": "测试项目", "optimized": "优化后的项目描述",
-                            "techniques_used": ["STAR法则"], "improvements": ["更量化"]})
+              return_value={"original_issues": ["缺少量化指标", "表达模糊"],
+                            "improved_version": "优化后的项目描述（通用版）",
+                            "python_backend_version": "优化后的项目描述（后端版）",
+                            "agent_version": "优化后的项目描述（Agent 版）"})
 
     _do_patch("app.services.image_analysis_service.ImageAnalysisService.extract_jd_from_screenshot",
               return_value="招聘后端开发工程师，要求Python、FastAPI、MySQL经验，3年以上。负责系统设计与开发。")
@@ -281,6 +289,54 @@ class TestConversation:
         body = resp.json()
         assert body["code"] == "success"
         assert len(body["data"]["conversations"]) == 2
+
+    def test_list_with_interview_badges(self, client):
+        """会话列表附带三类子节点徽标（面试/分析/优化计数），供树形子节点计数。"""
+        from datetime import datetime
+
+        from app.repositories import (
+            DatabaseManager,
+            InterviewSessionRepository,
+            JobAnalysisRepository,
+            ProjectRewriteRepository,
+        )
+
+        cid_a = _create_conversation(client)["conversation_id"]
+        cid_b = _create_conversation(client)["conversation_id"]
+        now = datetime.now()
+        session = DatabaseManager.get_session()
+        try:
+            with session.begin():
+                InterviewSessionRepository.create(
+                    session, session_id="iv_t1", conversation_id=cid_a, job_role="",
+                    direction="general", status="in_progress", round_count=0,
+                    initial_questions="[]", created_at=now, updated_at=now,
+                )
+                InterviewSessionRepository.create(
+                    session, session_id="iv_t2", conversation_id=cid_a, job_role="",
+                    direction="general", status="completed", round_count=3,
+                    initial_questions="[]", total_score=80, created_at=now, updated_at=now,
+                )
+                JobAnalysisRepository.create(
+                    session, conversation_id=cid_a, jd_text="JD",
+                    created_at=now,
+                )
+                ProjectRewriteRepository.create(
+                    session, conversation_id=cid_a, original_description="项目A",
+                    created_at=now,
+                )
+        finally:
+            DatabaseManager.remove_session()
+        body = client.get("/api/v1/conversation/list").json()
+        items = {c["conversation_id"]: c for c in body["data"]["conversations"]}
+        assert items[cid_a]["interview_count"] == 2
+        assert items[cid_a]["interview_in_progress"] == 1
+        assert items[cid_a]["analysis_count"] == 1
+        assert items[cid_a]["rewrite_count"] == 1
+        assert items[cid_b]["interview_count"] == 0
+        assert items[cid_b]["interview_in_progress"] == 0
+        assert items[cid_b]["analysis_count"] == 0
+        assert items[cid_b]["rewrite_count"] == 0
 
     def test_detail(self, client):
         conv = _create_conversation(client)
@@ -475,6 +531,44 @@ class TestJob:
         assert body["code"] == "success"
         assert len(body["data"]["analyses"]) >= 1
 
+    def test_analysis_detail(self, client):
+        conv = _create_conversation(client)
+        cid = conv["conversation_id"]
+        client.post("/api/v1/document/upload",
+                     data={"conversation_id": cid},
+                     files={"file": ("r.txt", _make_test_text_file(), "text/plain")})
+        aid = client.post(
+            "/api/v1/job/analyze", json={"conversation_id": cid, "jd_text": "后端开发"}
+        ).json()["data"]["analysis_id"]
+        resp = client.get(f"/api/v1/job/analysis/detail?analysis_id={aid}")
+        body = resp.json()
+        assert body["code"] == "success"
+        assert body["data"]["id"] == aid
+        assert "jd_text" in body["data"]
+
+    def test_analysis_detail_not_found(self, client):
+        resp = client.get("/api/v1/job/analysis/detail?analysis_id=99999")
+        assert resp.json()["code"] == 404
+
+    def test_analysis_delete(self, client):
+        conv = _create_conversation(client)
+        cid = conv["conversation_id"]
+        client.post("/api/v1/document/upload",
+                     data={"conversation_id": cid},
+                     files={"file": ("r.txt", _make_test_text_file(), "text/plain")})
+        aid = client.post(
+            "/api/v1/job/analyze", json={"conversation_id": cid, "jd_text": "后端开发"}
+        ).json()["data"]["analysis_id"]
+        resp = client.post("/api/v1/job/analysis/delete", json={"analysis_id": aid})
+        assert resp.json()["code"] == "success"
+        assert client.get(f"/api/v1/job/analysis/detail?analysis_id={aid}").json()["code"] == 404
+        listed = client.get(f"/api/v1/job/analysis/list?conversation_id={cid}").json()
+        assert all(a["id"] != aid for a in listed["data"]["analyses"])
+
+    def test_analysis_delete_empty(self, client):
+        resp = client.post("/api/v1/job/analysis/delete", json={"analysis_id": 0})
+        assert resp.json()["code"] == 400
+
     def test_analyze_from_screenshot_no_image(self, client):
         conv = _create_conversation(client)
         resp = client.post("/api/v1/job/analyze-from-screenshot", json={
@@ -558,6 +652,28 @@ class TestInterview:
         resp = client.get("/api/v1/interview/detail?session_id=nonexist")
         assert resp.json()["code"] == 404
 
+    def test_delete(self, client):
+        cid = self._setup_with_resume(client)
+        sid = client.post(
+            "/api/v1/interview/start", json={"conversation_id": cid}
+        ).json()["data"]["session_id"]
+        resp = client.post("/api/v1/interview/delete", json={"session_id": sid})
+        body = resp.json()
+        assert body["code"] == "success"
+        assert body["data"]["session_id"] == sid
+        # 场次与全部问答消息应一并清除
+        assert client.get(f"/api/v1/interview/detail?session_id={sid}").json()["code"] == 404
+        listed = client.get(f"/api/v1/interview/list?conversation_id={cid}").json()
+        assert all(s["session_id"] != sid for s in listed["data"]["sessions"])
+
+    def test_delete_not_found(self, client):
+        resp = client.post("/api/v1/interview/delete", json={"session_id": "nonexist"})
+        assert resp.json()["code"] == 404
+
+    def test_delete_empty_id(self, client):
+        resp = client.post("/api/v1/interview/delete", json={"session_id": ""})
+        assert resp.json()["code"] == 400
+
 
 class TestResume:
     def test_project_rewrite(self, client):
@@ -572,12 +688,46 @@ class TestResume:
         })
         body = resp.json()
         assert body["code"] == "success"
-        assert "optimized" in body["data"]
+        assert "improved_version" in body["data"]
 
     def test_rewrite_empty_params(self, client):
         resp = client.post("/api/v1/resume/project/rewrite", json={
             "conversation_id": "", "project_description": ""
         })
+        assert resp.json()["code"] == 400
+
+    def test_rewrite_persists_and_tree_apis(self, client):
+        """优化结果落库 + rewrites/detail/delete 三接口（会话树子节点链路）。"""
+        conv = _create_conversation(client)
+        cid = conv["conversation_id"]
+        body = client.post("/api/v1/resume/project/rewrite", json={
+            "conversation_id": cid,
+            "project_description": "我负责了一个电商系统的后端开发",
+        }).json()
+        assert body["code"] == "success"
+        rid = body["data"]["rewrite_id"]
+        assert rid > 0
+        assert body["data"]["improved_version"]
+
+        listed = client.get(f"/api/v1/resume/project/rewrites?conversation_id={cid}").json()
+        assert listed["code"] == "success"
+        assert any(r["rewrite_id"] == rid for r in listed["data"]["rewrites"])
+
+        detail = client.get(f"/api/v1/resume/project/rewrite/detail?rewrite_id={rid}").json()
+        assert detail["code"] == "success"
+        assert detail["data"]["original_description"] == "我负责了一个电商系统的后端开发"
+        assert detail["data"]["improved_version"] == body["data"]["improved_version"]
+
+        deleted = client.post("/api/v1/resume/project/rewrite/delete", json={"rewrite_id": rid})
+        assert deleted.json()["code"] == "success"
+        assert client.get(f"/api/v1/resume/project/rewrite/detail?rewrite_id={rid}").json()["code"] == 404
+
+    def test_rewrite_detail_not_found(self, client):
+        resp = client.get("/api/v1/resume/project/rewrite/detail?rewrite_id=99999")
+        assert resp.json()["code"] == 404
+
+    def test_rewrite_delete_empty(self, client):
+        resp = client.post("/api/v1/resume/project/rewrite/delete", json={"rewrite_id": 0})
         assert resp.json()["code"] == 400
 
     def test_versions_list(self, client):

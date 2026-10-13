@@ -4,6 +4,7 @@ import { ElMessage } from 'element-plus'
 import { notifyError } from '../../api'
 import { useChatStore } from '../../stores/chat'
 import { useConversationStore } from '../../stores/conversation'
+import { openStartDialog } from '../../utils/startDialog'
 
 const chat = useChatStore()
 const conv = useConversationStore()
@@ -96,6 +97,8 @@ async function onImageChange(e) {
         <input ref="imgInput" type="file" accept="image/png,image/jpeg,image/webp" multiple style="display: none" @change="onImageChange" />
         <!-- 上传中禁用图片按钮，避免连点重复选图；发送也等上传结束 -->
         <el-button size="small" text :loading="uploading" :disabled="uploading" @click="pickImage">🖼 图片</el-button>
+        <!-- 发起任务入口：面试/JD分析/项目优化三标签页，状态由 Workspace 里的 StartWorkDialog 承载 -->
+        <el-button size="small" text @click="openStartDialog()">🚀 发起任务</el-button>
         <span class="hint">Enter 发送 · Shift+Enter 换行</span>
         <el-button v-if="chat.sending" size="small" @click="chat.stopStreaming()">停止生成</el-button>
         <el-button v-else type="primary" size="small" :disabled="uploading" @click="send">发送</el-button>

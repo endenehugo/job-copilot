@@ -5,6 +5,7 @@ from .document_repository import ConversationDocument, DocumentRepository
 from .job_analysis_repository import JobAnalysis, JobAnalysisRepository
 from .interview_repository import InterviewSession, InterviewSessionRepository, InterviewMessage, InterviewMessageRepository
 from .resume_version_repository import ResumeVersion, ResumeVersionRepository
+from .project_rewrite_repository import ProjectRewrite, ProjectRewriteRepository
 
 __all__ = [
     "Base",
@@ -23,4 +24,6 @@ __all__ = [
     "InterviewMessageRepository",
     "ResumeVersion",
     "ResumeVersionRepository",
+    "ProjectRewrite",
+    "ProjectRewriteRepository",
 ]

@@ -15,3 +15,7 @@ class InterviewAnswerRequest(BaseModel):
     session_id: str = ""
     answer: str = ""
     question_index: int = 0
+
+
+class InterviewDeleteRequest(BaseModel):
+    session_id: str = ""
