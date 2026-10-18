@@ -177,3 +177,47 @@ def test_nonstream_agent_promotes_warnings():
     result = svc.chat("conv_1", "搜一下", "agent", [])
 
     assert result["warnings"], "chat() 返回必须携带工具链 warnings"
+
+
+# ---------------------------------------------------------------------------
+# 轮次用尽后的收尾调用：不能再交白卷，也不能继续调工具
+# ---------------------------------------------------------------------------
+
+
+def _finalize_service():
+    """工具轮必然耗尽 + 收尾调用返回一段正常回答。"""
+    svc = _build_tool_service()
+    svc.agent_llm.invoke.return_value = AIMessage(content="", tool_calls=list(_TOOL_CALL))
+    qa = MagicMock()
+    qa.invoke.return_value = AIMessage(content="汇总后的回答")
+    svc._get_qa_llm = lambda: qa
+    return svc, qa
+
+
+def test_round_exhaustion_finalizes_from_tool_results():
+    """轮次耗尽时用不带工具的收尾调用作答，而不是让用户看到"抱歉，我无法生成回答"。"""
+    svc, qa = _finalize_service()
+
+    events = list(svc.chat_stream("conv_1", "搜一下", "agent", []))
+    done = next(e for e in events if e["event"] == "done")
+    deltas = [e["data"]["text"] for e in events if e["event"] == "delta"]
+
+    assert done["data"]["answer"] == "汇总后的回答"
+    assert "汇总后的回答" in deltas, "收尾回答要按 delta 发给前端，否则界面不显示"
+    # 仍然要告诉用户这不是模型本来的最终回答
+    assert any("汇总生成" in w for w in done["data"]["warnings"])
+    # 收尾调用必须带上工具结果与用户问题，且走不带工具的客户端
+    # （_prepare_chat 被桩成固定 query="他的学历是什么"）
+    prompt = qa.invoke.call_args[0][0]
+    assert "用户问题：他的学历是什么" in prompt
+    assert "搜索结果内容" in prompt
+
+
+def test_nonstream_round_exhaustion_finalizes():
+    """非流式路径与流式一致，轮次耗尽后也要收尾作答。"""
+    svc, _qa = _finalize_service()
+
+    result = svc.chat("conv_1", "搜一下", "agent", [])
+
+    assert result["original_answer"] == "汇总后的回答"
+    assert any("汇总生成" in w for w in result["warnings"])

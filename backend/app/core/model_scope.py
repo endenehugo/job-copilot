@@ -13,6 +13,11 @@
 多线程说明：同步生成器由 starlette 经 anyio 线程池消费，
 anyio.to_thread.run_sync 会拷贝当前 context，ContextVar 值可见；
 每个 ASGI 请求运行在独立 Task（独立 context 拷贝）中，不会跨请求泄漏。
+
+但注意：iterate_in_threadpool 是「每次 __next__ 一个新拷贝」，
+set 的 token 无法在后续迭代里 reset（ValueError: Token was created in a different
+Context），且后续迭代看不到第一次 set 的值。所以流式端点必须自己把生成器固定在
+同一个 context 里驱动（见 conversations.py 的 generate()）。
 """
 
 from __future__ import annotations

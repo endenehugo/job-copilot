@@ -68,6 +68,9 @@ class ConversationChatService:
     # 工具轮上限：make-resume 需要 load_skill 取指南 -> 多块 html_document_tool 写入 -> 收尾，
     # 3 轮不够用，模型会在没落盘的情况下被强制收尾（表现就是"生成不出 HTML 文件"）。
     _MAX_TOOL_ROUNDS = 6
+    # 收尾调用里每条工具结果最多带多少字符：html_document_tool 之类会返回整页产物，
+    # 全量塞进去只会把收尾调用也拖慢，摘要用的前 1200 字足够
+    _TOOL_RESULT_PREVIEW_CHARS = 1200
 
     def __post_init__(self):
         self.qa_llm = None
@@ -170,7 +173,7 @@ class ConversationChatService:
             }).to_messages()
 
             if normalized_mode == "agent":
-                answer, files, tool_warnings = self._invoke_agent(prompt_messages)
+                answer, files, tool_warnings = self._invoke_agent(prompt_messages, effective_query)
             else:
                 answer = self._get_qa_llm().invoke(prompt_messages).content
 
@@ -264,7 +267,7 @@ class ConversationChatService:
                     messages.append(AIMessage(content=merged.content or "", tool_calls=list(merged.tool_calls)))
                     tool_result: dict = {}
                     # 透传工具进度事件：agent 模式的长工具链对用户可见
-                    for ev in self._run_tool_rounds(messages, tool_result):
+                    for ev in self._run_tool_rounds(messages, tool_result, effective_query):
                         yield ev
                     final_answer = tool_result.get("answer", "")
                     files = tool_result.get("files", [])
@@ -317,7 +320,38 @@ class ConversationChatService:
             except Exception as exc:
                 logger.warning("上下文验证异常，跳过: %s", exc)
 
-    def _run_tool_rounds(self, messages: list, result: dict):
+    def _finalize_without_tools(self, query: str, tool_outputs: list[tuple[str, str]]) -> str:
+        """工具轮次用尽后的收尾：不再给工具，让模型基于已有工具结果直接作答。
+
+        没有这一步时，轮次耗尽只能返回最后一段中间文本或空串（用户看到
+        "抱歉，我暂时无法生成回答"），前面几次工具调用的成本全部作废。
+        这里用不带工具的客户端，避免它继续调工具又把轮次走完一遍。
+        调用失败返回空串，由调用方维持原有的降级行为。
+        """
+        parts = []
+        for name, content in tool_outputs:
+            text = (content or "").strip()
+            if not text:
+                continue
+            if len(text) > self._TOOL_RESULT_PREVIEW_CHARS:
+                text = text[: self._TOOL_RESULT_PREVIEW_CHARS] + "…（已截断）"
+            parts.append(f"【{name}】\n{text}")
+        if not parts:
+            return ""
+        prompt = (
+            "你是求职助手。本轮的工具调用次数已经用完，现在不能再调用任何工具。\n"
+            "请只依据下面已经拿到的工具结果直接回答用户的问题；"
+            "如果这些结果不足以回答，就说清楚缺少什么信息，不要编造。\n\n"
+            f"用户问题：{query}\n\n"
+            "已拿到的工具结果：\n\n" + "\n\n".join(parts)
+        )
+        try:
+            return (self._get_qa_llm().invoke(prompt).content or "").strip()
+        except Exception as exc:
+            logger.warning("工具轮次用尽后的收尾调用失败: %s", exc)
+            return ""
+
+    def _run_tool_rounds(self, messages: list, result: dict, query: str = ""):
         """首轮流式命中工具调用后，继续执行工具轮。
 
         改为生成器：每个工具执行前产出 tool_status 事件（SSE 透传给前端，
@@ -328,6 +362,7 @@ class ConversationChatService:
         """
         files: list[dict] = []
         warnings: list[str] = []
+        tool_outputs: list[tuple[str, str]] = []
         last_text = ""
         step = 0
 
@@ -357,12 +392,21 @@ class ConversationChatService:
                 content, failed = self._execute_tool_call(tool_call)
                 if failed:
                     warnings.append(f"工具 {name} 执行失败")
+                tool_outputs.append((name, content))
                 artifact = self._collect_artifact(content)
                 if artifact:
                     files.append(artifact)
                 messages.append(ToolMessage(tool_call_id=tool_call.get("id"), content=content))
 
-        # 轮次用尽：不要返回空串让用户看到"AI 什么都没说"，给出已收集到的最后一段文本，
+        # 轮次用尽：先做一次不带工具的收尾调用，让模型基于已执行完的工具结果作答。
+        # 没有这一步时用户只会看到"抱歉，我暂时无法生成回答"，前几轮工具的成本全部作废。
+        finalized = self._finalize_without_tools(query, tool_outputs)
+        if finalized:
+            warnings.append("工具调用已达轮次上限，回答由已执行工具的结果汇总生成")
+            result.update(answer=finalized, files=files, warnings=warnings, exhausted=True)
+            return
+
+        # 收尾调用也失败：不要返回空串让用户看到"AI 什么都没说"，给出已收集到的最后一段文本，
         # 但必须让前端知道这不是正常完成的回答
         if last_text:
             warnings.append("工具调用已达轮次上限，返回的是中间内容而非最终回答")
@@ -433,11 +477,12 @@ class ConversationChatService:
             "format": artifact.get("format", "html"),
         }
 
-    def _invoke_agent(self, messages: list) -> tuple[str, list[dict], list[str]]:
+    def _invoke_agent(self, messages: list, query: str = "") -> tuple[str, list[dict], list[str]]:
         """执行工具轮直到拿到最终回答，同时回收本轮落盘的文件产物与告警。"""
         chain_output = ""
         files: list[dict] = []
         warnings: list[str] = []
+        tool_outputs: list[tuple[str, str]] = []
         for _ in range(self._MAX_TOOL_ROUNDS):
             response = self._get_agent_llm().invoke(messages)
             messages.append(response)
@@ -450,11 +495,18 @@ class ConversationChatService:
                 content, failed = self._execute_tool_call(tool_call)
                 if failed:
                     warnings.append(f"工具 {tool_call.get('name')} 执行失败")
+                tool_outputs.append((tool_call.get("name") or "", content))
                 artifact = self._collect_artifact(content)
                 if artifact:
                     files.append(artifact)
                 messages.append(ToolMessage(tool_call_id=tool_call.get("id"), content=content))
-        # 轮次用尽：与流式路径一致，标记为非正常完成
+
+        # 轮次用尽：与流式路径一致，先做一次不带工具的收尾调用，避免交白卷
+        finalized = self._finalize_without_tools(query, tool_outputs)
+        if finalized:
+            warnings.append("工具调用已达轮次上限，回答由已执行工具的结果汇总生成")
+            return finalized, files, warnings
+
         warnings.append(
             "工具调用已达轮次上限，返回的是中间内容而非最终回答"
             if chain_output

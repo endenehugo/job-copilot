@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 import os
@@ -18,6 +19,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.core.deps import (
@@ -42,6 +44,17 @@ _SAFE_SEGMENT_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 def _is_safe_segment(value: str) -> bool:
     return bool(value) and value not in {".", ".."} and bool(_SAFE_SEGMENT_PATTERN.fullmatch(value))
+
+
+def _next_or_none(iterator):
+    """线程池里取同步生成器的下一项。
+
+    StopIteration 无法穿过协程边界（会被当成运行时错误），用 None 表示"流结束"。
+    """
+    try:
+        return next(iterator)
+    except StopIteration:
+        return None
 
 
 @router.post("/conversation/create")
@@ -113,18 +126,28 @@ def conversation_chat_stream(payload: ChatRequest, role: str = Depends(get_curre
     def sse(event: str, data) -> str:
         return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
-    def generate():
-        try:
-            with request_model_scope(selected_model, role):
-                for event in get_conversation_chat_service().chat_stream(
-                    conversation_id, query, payload.mode, image_urls
-                ):
+    async def generate():
+        # 为什么不用同步生成器：starlette 的 iterate_in_threadpool 每次 __next__ 都
+        # 在新 context 拷贝里执行，第一次迭代 set 的 ContextVar token 到后续迭代 reset
+        # 时会抛 ValueError（Token was created in a different Context），
+        # 恰好炸在 done 之后的验证阶段——用户看到的是"字打完了又冒出一段报错"。
+        # 这里把整个生成器固定在同一个 context 里驱动，模型作用域在整条流上保持一致。
+        iterator = get_conversation_chat_service().chat_stream(
+            conversation_id, query, payload.mode, image_urls
+        )
+        with request_model_scope(selected_model, role):
+            ctx = contextvars.copy_context()  # 必须在 scope 内取，才带上本次模型
+            try:
+                while True:
+                    event = await run_in_threadpool(ctx.run, _next_or_none, iterator)
+                    if event is None:
+                        break
                     yield sse(event["event"], event["data"])
-        except ValueError as exc:
-            yield sse("error", {"message": str(exc)})
-        except Exception as exc:
-            logger.exception("流式问答异常: %s", exc)
-            yield sse("error", {"message": f"服务器内部错误: {exc}"})
+            except ValueError as exc:
+                yield sse("error", {"message": str(exc)})
+            except Exception as exc:
+                logger.exception("流式问答异常: %s", exc)
+                yield sse("error", {"message": f"服务器内部错误: {exc}"})
 
     return StreamingResponse(
         generate(),
