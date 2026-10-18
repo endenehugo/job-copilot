@@ -1,11 +1,12 @@
 <script setup>
 import { onBeforeUnmount, onMounted, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { conversationApi, notifyError } from '../../api'
+import { notifyError } from '../../api'
 import { useConversationStore } from '../../stores/conversation'
 import { useInterviewStore } from '../../stores/interview'
 import { useAnalysisStore } from '../../stores/analysis'
 import { useRewriteStore } from '../../stores/rewrite'
+import AppIcon from '../shell/AppIcon.vue'
 
 const store = useConversationStore()
 const interview = useInterviewStore()
@@ -29,9 +30,9 @@ const DIRECTION_LABEL = {
 
 // 三类子节点的统一描述：分组标题、懒加载、子项渲染
 const GROUPS = [
-  { key: 'iv', icon: '🎯', label: '面试' },
-  { key: 'an', icon: '📊', label: 'JD 分析' },
-  { key: 'rw', icon: '✏️', label: '项目优化' },
+  { key: 'iv', icon: 'target', label: '面试' },
+  { key: 'an', icon: 'chart', label: 'JD 分析' },
+  { key: 'rw', icon: 'pen', label: '项目优化' },
 ]
 
 function groupState(cid) {
@@ -47,24 +48,43 @@ function groupCount(c, key) {
   return c.rewrite_count || 0
 }
 
-function onToggleGroup(c, key) {
-  const state = groupState(c.conversation_id)
-  state[key] = !state[key]
-  persistExpanded()
-  // 展开时懒加载该组数据
-  if (!state[key]) return
-  const cid = c.conversation_id
+function totalCount(c) {
+  return GROUPS.reduce((sum, g) => sum + groupCount(c, g.key), 0)
+}
+
+function isExpanded(c) {
+  const st = groupState(c.conversation_id)
+  return GROUPS.some((g) => st[g.key])
+}
+
+function loadGroup(cid, key) {
   if (key === 'iv') interview.loadSessions(cid)
   else if (key === 'an') analysis.loadList(cid)
   else rewrite.loadList(cid)
 }
 
-async function onCreate() {
-  try {
-    await store.create()
-  } catch (err) {
-    notifyError(err)
+function onToggleGroup(c, key) {
+  const state = groupState(c.conversation_id)
+  state[key] = !state[key]
+  persistExpanded()
+  if (state[key]) loadGroup(c.conversation_id, key)
+}
+
+// 行首箭头的语义改为「展开/收起这个会话的全部记录」，
+// 旧实现无论点哪里都只切面试分组，与箭头暗示不符。
+function onToggleAll(c) {
+  const state = groupState(c.conversation_id)
+  if (isExpanded(c)) {
+    GROUPS.forEach((g) => (state[g.key] = false))
+    persistExpanded()
+    return
   }
+  GROUPS.forEach((g) => {
+    if (!groupCount(c, g.key)) return
+    state[g.key] = true
+    loadGroup(c.conversation_id, g.key)
+  })
+  persistExpanded()
 }
 
 async function onSelect(c) {
@@ -157,6 +177,15 @@ function onContextMenu(e, cid) {
   menu.cid = cid
 }
 
+// 悬停出现"⋯"按钮：用按钮位置定位菜单，替代原来"只能右键"的隐藏交互
+function onMoreClick(e, cid) {
+  const rect = e.currentTarget.getBoundingClientRect()
+  menu.visible = true
+  menu.x = Math.max(8, rect.right - 132)
+  menu.y = rect.bottom + 4
+  menu.cid = cid
+}
+
 function closeMenu() {
   menu.visible = false
 }
@@ -176,128 +205,136 @@ async function onDelete() {
 onMounted(() => document.addEventListener('click', closeMenu))
 onBeforeUnmount(() => document.removeEventListener('click', closeMenu))
 
-function fmt(ts) {
-  return (ts || '').replace('T', ' ').slice(0, 16)
-}
-
 function fmtShort(ts) {
   return (ts || '').replace('T', ' ').slice(5, 16)
 }
 </script>
 
 <template>
-  <div>
-    <div style="display: flex; justify-content: flex-end; margin-bottom: 8px">
-      <el-button type="primary" size="small" @click="onCreate">新建对话</el-button>
-    </div>
-    <div v-if="!store.conversations.length" class="hint">暂无会话，点击右上角新建。右键对话可删除。</div>
+  <div class="conv-list">
+    <div v-if="!store.conversations.length" class="conv-empty">还没有对话</div>
 
-    <div v-for="c in store.conversations" :key="c.conversation_id">
-      <!-- 父节点：会话 -->
+    <div v-for="c in store.conversations" :key="c.conversation_id" class="conv-node">
       <div
-        class="conversation-item"
+        class="conv-row"
         :class="{ active: store.activeType === 'conversation' && c.conversation_id === store.currentId }"
         @click="onSelect(c)"
         @contextmenu.prevent="onContextMenu($event, c.conversation_id)"
       >
-        <div class="row">
-          <span
-            class="caret"
-            :class="{ open: Object.values(groupState(c.conversation_id)).some(Boolean) }"
-            @click.stop="onToggleGroup(c, 'iv')"
-          >▶</span>
-          <div class="body">
-            <div class="title">
-              {{ c.title }}
-              <span class="badges">
-                <template v-for="g in GROUPS" :key="g.key">
-                  <span v-if="groupCount(c, g.key)" class="mini-badge" :title="g.label">
-                    {{ g.icon }}{{ groupCount(c, g.key) }}
-                  </span>
+        <button
+          v-if="totalCount(c)"
+          class="conv-caret"
+          :class="{ open: isExpanded(c) }"
+          :title="isExpanded(c) ? '收起记录' : '展开记录'"
+          @click.stop="onToggleAll(c)"
+        >
+          <AppIcon name="chevronRight" :size="12" />
+        </button>
+        <span v-else class="conv-caret is-blank"></span>
+
+        <span class="conv-title" :title="c.title">{{ c.title }}</span>
+
+        <span v-if="totalCount(c) && !isExpanded(c)" class="conv-badge">{{ totalCount(c) }}</span>
+
+        <button class="conv-more" title="更多操作" @click.stop="onMoreClick($event, c.conversation_id)">
+          <AppIcon name="more" :size="15" />
+        </button>
+      </div>
+
+      <!-- 子记录：保留会话→分组→记录的三级结构，只把视觉压平 -->
+      <template v-if="isExpanded(c)">
+        <div v-for="g in GROUPS" :key="g.key" class="conv-group">
+          <template v-if="groupCount(c, g.key) || groupState(c.conversation_id)[g.key]">
+            <button class="conv-group-head" @click="onToggleGroup(c, g.key)">
+              <AppIcon :name="g.icon" :size="13" />
+              <span>{{ g.label }}</span>
+              <span class="conv-group-count">{{ groupCount(c, g.key) }}</span>
+              <AppIcon
+                name="chevronDown"
+                :size="12"
+                class="conv-group-caret"
+                :class="{ open: groupState(c.conversation_id)[g.key] }"
+              />
+            </button>
+
+            <template v-if="groupState(c.conversation_id)[g.key]">
+              <!-- 面试 -->
+              <template v-if="g.key === 'iv'">
+                <div v-if="interview.loadingSessions[c.conversation_id]" class="conv-hint">加载中…</div>
+                <template v-else>
+                  <div
+                    v-for="s in interview.sessionsOf(c.conversation_id)"
+                    :key="s.session_id"
+                    class="conv-child"
+                    :class="{ active: store.activeType === 'interview' && store.activeNodeId === s.session_id }"
+                    @click="onOpenInterview(c, s)"
+                  >
+                    <span class="conv-child-title">{{ DIRECTION_LABEL[s.direction] || s.direction }} · {{ s.round_count }} 轮</span>
+                    <span class="conv-child-meta">
+                      <span v-if="s.status === 'completed'" class="conv-score">
+                        {{ s.total_score == null ? '已结束' : `${s.total_score} 分` }}
+                      </span>
+                      <span v-else class="conv-live">进行中</span>
+                      <span class="conv-time">{{ fmtShort(s.updated_at) }}</span>
+                      <button class="conv-del" title="删除该场面试" @click.stop="onDeleteInterview(c, s)">
+                        <AppIcon name="trash" :size="13" />
+                      </button>
+                    </span>
+                  </div>
+                  <div v-if="!interview.sessionsOf(c.conversation_id).length" class="conv-hint">暂无记录</div>
                 </template>
-              </span>
-            </div>
-            <div class="preview">{{ c.last_message_preview || fmt(c.updated_at) }}</div>
-          </div>
+              </template>
+
+              <!-- JD 分析 -->
+              <template v-else-if="g.key === 'an'">
+                <div v-if="analysis.loadingList[c.conversation_id]" class="conv-hint">加载中…</div>
+                <template v-else>
+                  <div
+                    v-for="a in analysis.listOf(c.conversation_id)"
+                    :key="a.id"
+                    class="conv-child"
+                    :class="{ active: store.activeType === 'analysis' && store.activeNodeId === a.id }"
+                    @click="onOpenAnalysis(c, a)"
+                  >
+                    <span class="conv-child-title">{{ a.job_role || '岗位未识别' }}</span>
+                    <span class="conv-child-meta">
+                      <span class="conv-score">{{ a.total_score == null ? '未评分' : `${a.total_score} 分` }}</span>
+                      <span class="conv-time">{{ fmtShort(a.created_at) }}</span>
+                      <button class="conv-del" title="删除该条分析" @click.stop="onDeleteAnalysis(c, a)">
+                        <AppIcon name="trash" :size="13" />
+                      </button>
+                    </span>
+                  </div>
+                  <div v-if="!analysis.listOf(c.conversation_id).length" class="conv-hint">暂无记录</div>
+                </template>
+              </template>
+
+              <!-- 项目优化 -->
+              <template v-else>
+                <div v-if="rewrite.loadingList[c.conversation_id]" class="conv-hint">加载中…</div>
+                <template v-else>
+                  <div
+                    v-for="r in rewrite.listOf(c.conversation_id)"
+                    :key="r.rewrite_id"
+                    class="conv-child"
+                    :class="{ active: store.activeType === 'rewrite' && store.activeNodeId === r.rewrite_id }"
+                    @click="onOpenRewrite(c, r)"
+                  >
+                    <span class="conv-child-title">{{ r.original_preview || '（无描述）' }}</span>
+                    <span class="conv-child-meta">
+                      <span class="conv-time">{{ fmtShort(r.created_at) }}</span>
+                      <button class="conv-del" title="删除该条优化" @click.stop="onDeleteRewrite(c, r)">
+                        <AppIcon name="trash" :size="13" />
+                      </button>
+                    </span>
+                  </div>
+                  <div v-if="!rewrite.listOf(c.conversation_id).length" class="conv-hint">暂无记录</div>
+                </template>
+              </template>
+            </template>
+          </template>
         </div>
-      </div>
-
-      <!-- 分组子节点 -->
-      <div v-for="g in GROUPS" :key="g.key">
-        <template v-if="groupState(c.conversation_id)[g.key]">
-          <!-- 🎯 面试 -->
-          <template v-if="g.key === 'iv'">
-            <div class="group-title">{{ g.icon }} 面试 ({{ interview.sessionsOf(c.conversation_id).length }})</div>
-            <div v-if="interview.loadingSessions[c.conversation_id]" class="hint iv-children">加载中…</div>
-            <template v-else>
-              <div
-                v-for="s in interview.sessionsOf(c.conversation_id)"
-                :key="s.session_id"
-                class="interview-item"
-                :class="{ active: store.activeType === 'interview' && store.activeNodeId === s.session_id }"
-                @click="onOpenInterview(c, s)"
-              >
-                <span class="iv-title">🎯 {{ DIRECTION_LABEL[s.direction] || s.direction }} · {{ s.round_count }}轮</span>
-                <span class="iv-meta">
-                  <span class="iv-time">{{ fmtShort(s.updated_at) }}</span>
-                  <el-tag size="small" :type="s.status === 'completed' ? 'success' : 'warning'">
-                    {{ s.status === 'completed' ? (s.total_score == null ? '已结束' : `${s.total_score}分`) : '进行中' }}
-                  </el-tag>
-                  <el-button class="iv-del" size="small" text title="删除该场面试" @click.stop="onDeleteInterview(c, s)">🗑</el-button>
-                </span>
-              </div>
-              <div v-if="!interview.sessionsOf(c.conversation_id).length" class="hint iv-children">暂无记录</div>
-            </template>
-          </template>
-
-          <!-- 📊 JD 分析 -->
-          <template v-else-if="g.key === 'an'">
-            <div class="group-title">{{ g.icon }} JD 分析 ({{ analysis.listOf(c.conversation_id).length }})</div>
-            <div v-if="analysis.loadingList[c.conversation_id]" class="hint iv-children">加载中…</div>
-            <template v-else>
-              <div
-                v-for="a in analysis.listOf(c.conversation_id)"
-                :key="a.id"
-                class="interview-item"
-                :class="{ active: store.activeType === 'analysis' && store.activeNodeId === a.id }"
-                @click="onOpenAnalysis(c, a)"
-              >
-                <span class="iv-title">📊 {{ a.job_role || '岗位未识别' }}</span>
-                <span class="iv-meta">
-                  <span class="iv-time">{{ fmtShort(a.created_at) }}</span>
-                  <el-tag size="small" :type="a.total_score != null ? 'success' : 'info'">
-                    {{ a.total_score == null ? '未评分' : `${a.total_score}分` }}
-                  </el-tag>
-                  <el-button class="iv-del" size="small" text title="删除该条分析" @click.stop="onDeleteAnalysis(c, a)">🗑</el-button>
-                </span>
-              </div>
-              <div v-if="!analysis.listOf(c.conversation_id).length" class="hint iv-children">暂无记录</div>
-            </template>
-          </template>
-
-          <!-- ✏️ 项目优化 -->
-          <template v-else>
-            <div class="group-title">{{ g.icon }} 项目优化 ({{ rewrite.listOf(c.conversation_id).length }})</div>
-            <div v-if="rewrite.loadingList[c.conversation_id]" class="hint iv-children">加载中…</div>
-            <template v-else>
-              <div
-                v-for="r in rewrite.listOf(c.conversation_id)"
-                :key="r.rewrite_id"
-                class="interview-item"
-                :class="{ active: store.activeType === 'rewrite' && store.activeNodeId === r.rewrite_id }"
-                @click="onOpenRewrite(c, r)"
-              >
-                <span class="iv-title">✏️ {{ r.original_preview || '（无描述）' }}</span>
-                <span class="iv-meta">
-                  <span class="iv-time">{{ fmtShort(r.created_at) }}</span>
-                  <el-button class="iv-del" size="small" text title="删除该条优化" @click.stop="onDeleteRewrite(c, r)">🗑</el-button>
-                </span>
-              </div>
-              <div v-if="!rewrite.listOf(c.conversation_id).length" class="hint iv-children">暂无记录</div>
-            </template>
-          </template>
-        </template>
-      </div>
+      </template>
     </div>
 
     <div
@@ -307,90 +344,10 @@ function fmtShort(ts) {
       @click.stop
       @contextmenu.prevent
     >
-      <div class="context-menu-item danger" @click="onDelete">🗑 删除对话</div>
+      <div class="context-menu-item danger" @click="onDelete">
+        <AppIcon name="trash" :size="14" />
+        删除对话
+      </div>
     </div>
   </div>
 </template>
-
-<style scoped>
-.row {
-  display: flex;
-  align-items: flex-start;
-  gap: 4px;
-}
-.caret {
-  flex: none;
-  font-size: 9px;
-  color: var(--text-secondary, #909399);
-  cursor: pointer;
-  padding: 3px 2px 0 0;
-  transition: transform 0.15s;
-  user-select: none;
-}
-.caret.open {
-  transform: rotate(90deg);
-}
-.body {
-  flex: 1;
-  min-width: 0;
-}
-.badges {
-  display: inline-flex;
-  gap: 4px;
-  margin-left: 4px;
-}
-.mini-badge {
-  font-size: 10px;
-  color: var(--el-color-primary);
-  background: var(--el-color-primary-light-9, #ecf5ff);
-  border-radius: 3px;
-  padding: 0 4px;
-  white-space: nowrap;
-}
-.group-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-secondary, #909399);
-  padding: 4px 0 2px 24px;
-}
-.interview-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 8px 5px 22px;
-  margin: 2px 0 2px 10px;
-  border-left: 2px solid var(--border, #e5e6eb);
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 12px;
-}
-.interview-item:hover {
-  background: var(--el-fill-color-light, #f7f8fa);
-}
-.interview-item.active {
-  background: var(--el-color-primary-light-9, #ecf5ff);
-}
-.iv-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.iv-meta {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: none;
-}
-.iv-time {
-  color: var(--text-secondary, #909399);
-  font-size: 11px;
-}
-.iv-del {
-  padding: 2px;
-}
-.iv-children {
-  padding-left: 28px;
-  margin: 2px 0;
-}
-</style>

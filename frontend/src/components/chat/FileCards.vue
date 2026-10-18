@@ -47,44 +47,46 @@ function formatSize(bytes) {
 
 <style scoped>
 .file-cards {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border-color, #e5e7eb);
+  margin-top: 12px;
 }
 .file-cards-title {
   font-size: 12px;
-  color: var(--text-secondary, #6b7280);
+  color: var(--text-3);
   margin-bottom: 6px;
 }
 .file-card {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: 12px;
+  padding: 10px 12px;
   margin-bottom: 6px;
-  border: 1px solid var(--border-color, #e5e7eb);
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
   text-decoration: none;
   color: inherit;
-  transition: border-color 0.15s ease;
+  background: var(--surface-1);
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 .file-card:hover {
-  border-color: var(--primary-color, #2458b8);
+  background: var(--surface-sunken);
+  border-color: var(--line-strong);
 }
 .file-ext {
   flex: none;
-  font-size: 11px;
-  font-weight: 500;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: #eef2ff;
-  color: #2458b8;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: var(--surface-active);
+  color: var(--text-1);
 }
 .file-meta {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
+  gap: 1px;
 }
 .file-name {
   font-size: 13px;
@@ -92,11 +94,11 @@ function formatSize(bytes) {
 }
 .file-size {
   font-size: 11px;
-  color: var(--text-secondary, #6b7280);
+  color: var(--text-3);
 }
 .file-action {
   flex: none;
   font-size: 12px;
-  color: var(--primary-color, #2458b8);
+  color: var(--text-2);
 }
 </style>

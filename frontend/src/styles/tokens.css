@@ -1,0 +1,102 @@
+/* 设计 token：ChatGPT 式中性色系。
+   规则：彩色只用于语义状态（对/错/风险），界面主色一律黑灰。
+   文件必须在 element-plus/dist/index.css 之后引入，否则覆写不生效。 */
+
+:root {
+  /* 中性色 */
+  --canvas: #ffffff;
+  --sidebar-bg: #f9f9f9;
+  --surface-1: #ffffff;
+  --surface-hover: #ececec;
+  --surface-active: #e6e6e6;
+  --surface-sunken: #f4f4f4;
+  --bubble-user: #f4f4f4;
+  --text-1: #0d0d0d;
+  --text-2: #5d5d5d;
+  --text-3: #8f8f8f;
+  --line: #e5e5e5;
+  --line-strong: #d9d9d9;
+  --accent: #0d0d0d;
+  --accent-fg: #ffffff;
+
+  /* 语义色：不可中性化。unknown 必须是灰，不能被读成"正常" */
+  --ok: #16a34a;
+  --ok-bg: #f0fdf4;
+  --ok-line: #bbf7d0;
+  --warn: #d97706;
+  --warn-bg: #fffbeb;
+  --warn-line: #fde68a;
+  --danger: #dc2626;
+  --danger-bg: #fef2f2;
+  --danger-line: #fecaca;
+  --unknown: #8f8f8f;
+  --unknown-bg: #f4f4f4;
+  --unknown-line: #e5e5e5;
+
+  /* 尺寸与排版 */
+  --r-row: 8px;
+  --r-card: 12px;
+  --r-bubble: 20px;
+  --r-composer: 26px;
+  --sidebar-w: 260px;
+  --sidebar-w-mobile: 280px;
+  --content-w: 860px;
+  /* 助手回答的右侧留白：把 AI 文本整体压向左侧，与右侧右对齐的用户气泡
+     拉开层级。若两侧都不留白，两块内容边界重合，视觉上会挤成一列。 */
+  --msg-gutter: 88px;
+  --head-h: 52px;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+
+  /* 兼容旧变量：未改造的面试/JD 分析/项目优化视图仍在引用 */
+  --bg: var(--canvas);
+  --panel: var(--surface-1);
+  --border: var(--line);
+  --border-color: var(--line);
+  --text: var(--text-1);
+  --text-secondary: var(--text-3);
+  --primary: var(--accent);
+  --primary-color: var(--accent);
+  --sidebar-width: var(--sidebar-w);
+  --bg-secondary: var(--surface-sunken);
+
+  /* Element Plus 变量覆写 */
+  --el-color-primary: #0d0d0d;
+  --el-color-primary-light-3: #4d4d4d;
+  --el-color-primary-light-5: #8f8f8f;
+  --el-color-primary-light-7: #d4d4d4;
+  --el-color-primary-light-8: #e0e0e0;
+  --el-color-primary-light-9: #ececec;
+  --el-color-primary-dark-2: #000000;
+  --el-color-success: #16a34a;
+  --el-color-warning: #d97706;
+  --el-color-danger: #dc2626;
+  --el-color-error: #dc2626;
+  --el-color-info: #8f8f8f;
+  --el-text-color-primary: #0d0d0d;
+  --el-text-color-regular: #3d3d3d;
+  --el-text-color-secondary: #8f8f8f;
+  --el-border-color: #e5e5e5;
+  --el-border-color-light: #ececec;
+  --el-border-color-lighter: #f0f0f0;
+  --el-fill-color-light: #f4f4f4;
+  --el-fill-color-blank: #ffffff;
+  --el-bg-color: #ffffff;
+  --el-border-radius-base: 10px;
+  --el-border-radius-small: 8px;
+  --el-font-family: var(--font-sans);
+  --el-font-size-base: 14px;
+}
+
+/* 窄屏没有多余横向空间，右侧留白按可用宽度收缩，避免正文被挤成窄柱 */
+@media (max-width: 1080px) {
+  :root {
+    --msg-gutter: 48px;
+  }
+}
+@media (max-width: 900px) {
+  :root {
+    --msg-gutter: 0px;
+  }
+}

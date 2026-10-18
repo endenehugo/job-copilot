@@ -31,11 +31,11 @@ async function onRewrite() {
     <el-input
       v-model="analysis.rewriteText"
       type="textarea"
-      :rows="5"
+      :rows="6"
       placeholder="粘贴需要优化的项目经历描述… 将结合会话内简历给出通用版、后端版与 Agent 版"
     />
     <div class="start-actions">
-      <el-button type="primary" size="small" :loading="analysis.rewriting" @click="onRewrite">开始优化</el-button>
+      <el-button type="primary" :loading="analysis.rewriting" @click="onRewrite">开始优化</el-button>
       <span class="hint">无需简历也可优化，有简历则结合简历上下文</span>
     </div>
   </div>
@@ -45,7 +45,8 @@ async function onRewrite() {
 .start-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 8px;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
 }
 </style>

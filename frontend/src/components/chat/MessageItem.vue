@@ -1,10 +1,20 @@
 <script setup>
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { renderMarkdown } from '../../utils/markdown'
+import { copyText } from '../../utils/clipboard'
 import SourcePanel from './SourcePanel.vue'
 import FileCards from './FileCards.vue'
+import AppIcon from '../shell/AppIcon.vue'
 
 const props = defineProps({ message: { type: Object, required: true } })
+
+// 用户消息按纯文本渲染：粘贴的 JD 里常带 "##"、"-"、表格，
+// 走 markdown 会在气泡里渲染出大标题，与截图里的"一段话"完全不是一回事。
+// 图片是发送时拼进 content 的 markdown，单独拆出来当附件显示。
+const userImages = computed(() =>
+  [...(props.message.content || '').matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)].map((m) => m[1])
+)
+const userText = computed(() => (props.message.content || '').replace(/!\[[^\]]*\]\([^)]+\)/g, '').trim())
 
 const TOOL_NAMES = {
   web_search: '联网搜索',
@@ -57,29 +67,57 @@ watch(
 onUnmounted(() => {
   if (timer) clearTimeout(timer)
 })
+
+const copied = ref(false)
+let copyTimer = null
+async function onCopy() {
+  if (!props.message.content) return
+  const ok = await copyText(props.message.content)
+  if (!ok) return
+  copied.value = true
+  clearTimeout(copyTimer)
+  copyTimer = setTimeout(() => (copied.value = false), 1600)
+}
+onUnmounted(() => clearTimeout(copyTimer))
 </script>
 
 <template>
-  <div class="message" :class="message.role">
-    <div class="avatar">{{ message.role === 'user' ? '我' : 'AI' }}</div>
-    <div class="bubble">
-      <div v-if="message.toolStatus && message.streaming" class="tool-status">
-        <span class="tool-dot"></span>
+  <div class="msg" :class="`msg--${message.role}`">
+    <!-- 用户：右对齐浅灰气泡，纯文本 + 图片附件 -->
+    <div v-if="message.role === 'user'" class="msg-user-bubble">
+      <img v-for="(src, i) in userImages" :key="i" :src="src" alt="附件图片" />
+      <div v-if="userText" class="msg-user-text">{{ userText }}</div>
+    </div>
+
+    <!-- 助手：无头像、无气泡、整列纯文本 -->
+    <div v-else class="msg-assistant">
+      <div v-if="message.toolStatus && message.streaming" class="msg-tool">
+        <span class="msg-tool-dot"></span>
         正在调用 {{ toolName(message.toolStatus.name) }} · 第 {{ message.toolStatus.step }} 步
       </div>
-      <div v-else-if="message.toolStatus && !message.streaming" class="tool-status done">
+      <div v-else-if="message.toolStatus" class="msg-tool is-done">
         已执行 {{ message.toolStatus.step }} 步工具调用
       </div>
-      <div v-html="html"></div><span v-if="message.streaming" class="stream-cursor">▍</span>
+
+      <div class="msg-md" v-html="html"></div>
+      <span v-if="message.streaming" class="msg-caret">▍</span>
+
       <div v-if="message.warnings && message.warnings.length" class="msg-warnings">
-        <div v-for="(w, i) in message.warnings" :key="i">⚠ {{ w }}</div>
+        <div v-for="(w, i) in message.warnings" :key="i" class="msg-warning">
+          <AppIcon name="warning" :size="14" />
+          <span>{{ w }}</span>
+        </div>
       </div>
-      <FileCards v-if="message.role === 'assistant'" :files="message.files" />
-      <SourcePanel
-        v-if="message.role === 'assistant'"
-        :sources="message.sources"
-        :verification="message.verification"
-      />
+
+      <FileCards :files="message.files" />
+      <SourcePanel :sources="message.sources" :verification="message.verification" />
+
+      <div v-if="!message.streaming && message.content" class="msg-actions">
+        <button class="msg-action" title="复制回答" @click="onCopy">
+          <AppIcon :name="copied ? 'check' : 'copy'" :size="15" />
+          <span>{{ copied ? '已复制' : '复制' }}</span>
+        </button>
+      </div>
     </div>
   </div>
 </template>

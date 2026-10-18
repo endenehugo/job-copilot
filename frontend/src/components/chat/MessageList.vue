@@ -44,11 +44,16 @@ watch(
   <div class="chat-wrap">
     <div ref="el" class="chatlogs" @scroll="onScroll">
       <MessageItem v-for="(m, i) in chat.messages" :key="i" :message="m" />
-      <div v-if="chat.sending && !chat.messages[chat.messages.length - 1]?.streaming" class="message assistant">
-        <div class="avatar">AI</div>
-        <div class="bubble hint">正在思考，请稍候…</div>
+
+      <div v-if="chat.sending && !chat.messages[chat.messages.length - 1]?.streaming" class="msg msg--assistant">
+        <div class="msg-assistant">
+          <div class="thinking"><span></span><span></span><span></span></div>
+        </div>
       </div>
     </div>
-    <div v-if="showJump" class="scroll-bottom-btn" title="回到底部" @click="scrollToBottom(true)">↓</div>
+
+    <button v-if="showJump" class="scroll-bottom-btn" title="回到底部" @click="scrollToBottom(true)">
+      ↓
+    </button>
   </div>
 </template>

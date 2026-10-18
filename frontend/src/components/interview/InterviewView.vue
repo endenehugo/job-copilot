@@ -5,12 +5,14 @@ import { exportApi, notifyError } from '../../api'
 import { downloadMarkdown } from '../../utils/clipboard'
 import { useInterviewStore } from '../../stores/interview'
 import { useConversationStore } from '../../stores/conversation'
+import { useAnalysisStore } from '../../stores/analysis'
 
 // 主区面试视图：进行中/可续答 + 已完成回放共用一套气泡渲染。
 // 进行中场次的状态由 interview.resumeSession 从 interview_messages 重建，
 // 刷新或切换会话后点回子节点不会丢进度。
 const interview = useInterviewStore()
 const conv = useConversationStore()
+const analysis = useAnalysisStore()
 const exportingId = ref('')
 
 const DIRECTION_LABEL = {
@@ -33,7 +35,9 @@ async function onSubmit() {
 
 async function onRestart() {
   try {
-    await interview.start()
+    // 重开一轮沿用同一个 JD 来源：优先本会话粘的草稿，其次后端回退到最近一次分析。
+    // 不传时后端只能靠"最近一次分析"，草稿会被静默忽略。
+    await interview.start(analysis.jdDraftFor(conv.currentId))
     ElMessage.success('新一轮面试已开始')
   } catch (err) {
     notifyError(err)

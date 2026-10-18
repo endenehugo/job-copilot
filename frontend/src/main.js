@@ -6,6 +6,8 @@ import 'element-plus/dist/index.css'
 
 import App from './App.vue'
 import router from './router'
+// 顺序有意义：先 EP 默认样式，再覆写 token，最后页面样式
+import './styles/tokens.css'
 import './style.css'
 
 const app = createApp(App)

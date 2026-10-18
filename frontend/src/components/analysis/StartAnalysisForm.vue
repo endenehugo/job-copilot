@@ -67,8 +67,9 @@ async function onShotChange(e) {
     <el-input
       v-model="analysis.jdText"
       type="textarea"
-      :rows="5"
+      :rows="6"
       placeholder="粘贴职位描述（JD）文本… 开始分析后将自动抽取关键词并结合简历评分"
+      @input="analysis.setJdText(conv.currentId, $event)"
     />
     <input
       ref="shotInput"
@@ -78,8 +79,8 @@ async function onShotChange(e) {
       @change="onShotChange"
     />
     <div class="start-actions">
-      <el-button type="primary" size="small" :loading="analysis.analyzing" @click="onAnalyze">开始分析</el-button>
-      <el-button size="small" :loading="analysis.analyzing" @click="pickShot">📷 招聘截图分析</el-button>
+      <el-button type="primary" :loading="analysis.analyzing" @click="onAnalyze">开始分析</el-button>
+      <el-button :loading="analysis.analyzing" @click="pickShot">招聘截图分析</el-button>
       <span class="hint">需要会话中已有简历</span>
     </div>
   </div>
@@ -89,7 +90,8 @@ async function onShotChange(e) {
 .start-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 8px;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
 }
 </style>
