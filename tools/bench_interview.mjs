@@ -123,6 +123,30 @@ rows.push({
 console.log(`开始：${sec(started.ms)}s，${qs.length} 题`)
 
 const sessionId = started.data.session_id
+
+// P2：开场只出 1 题，其余题目由后台补进题库。这里等它补齐再开始作答——
+// 真实用户要先读题再打字，通常都在这个窗口之后，所以后台补题的耗时用户看不到。
+// --wait-bank=0 可以跳过等待，用来复现"手太快，题库还没好"的降级路径。
+let prefetchMs = 0
+let bankInfo = { size: qs.length, state: started.data.bank_state || 'ready', cursor: 1 }
+if (args['wait-bank'] !== '0') {
+  const t = now()
+  while (bankInfo.state === 'pending' && now() - t < 25000) {
+    await new Promise((r) => setTimeout(r, 400))
+    const d = await api('GET', `/interview/detail?session_id=${sessionId}`)
+    bankInfo = d.data.session.question_bank
+  }
+  prefetchMs = now() - t
+  console.log(
+    `题库补齐：${sec(prefetchMs)}s → ${bankInfo.state} / ${bankInfo.size} 题（后台完成，不占首屏）`
+  )
+  rows.push({
+    name: '题库补齐（后台）',
+    ms: prefetchMs,
+    note: `state=${bankInfo.state} 共 ${bankInfo.size} 题`,
+  })
+}
+
 let index = 0
 for (let i = 0; i < ROUNDS; i++) {
   if (PLAIN) {
@@ -151,10 +175,10 @@ for (let i = 0; i < ROUNDS; i++) {
   rows.push({
     name: `第 ${i + 1} 轮（流式）`,
     ms: m.done ?? 0,
-    note: `首字 ${sec(m.first ?? 0)}s / 评价完 ${sec(m.score ?? 0)}s / 下一题 ${nextQ} · score=${d.score} action=${d.action} 评价 ${(r.evalText || '').length} 字${d.warnings?.length ? `，警告：${d.warnings.join('、')}` : ''}`,
+    note: `首字 ${sec(m.first ?? 0)}s / 评价完 ${sec(m.score ?? 0)}s / 下一题 ${nextQ} · score=${d.score} action=${d.action} 题目来源=${d.question_source ?? '?'} 评价 ${(r.evalText || '').length} 字${d.warnings?.length ? `，警告：${d.warnings.join('、')}` : ''}`,
   })
   console.log(
-    `第 ${i + 1} 轮：首字 ${sec(m.first ?? 0)}s → 评价完 ${sec(m.score ?? 0)}s → 下一题 ${nextQ}（总计 ${sec(m.done ?? 0)}s） score=${d.score}`
+    `第 ${i + 1} 轮：首字 ${sec(m.first ?? 0)}s → 评价完 ${sec(m.score ?? 0)}s → 下一题 ${nextQ}（总计 ${sec(m.done ?? 0)}s） score=${d.score} source=${d.question_source ?? '?'}`
   )
   if (d.action === 'summary') break
   index = d.question_index
