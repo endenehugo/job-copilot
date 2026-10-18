@@ -188,3 +188,54 @@ def test_persist_answer_forces_summary_at_round_limit(monkeypatch):
     assert "next_question" not in data
     assert data["total_rounds"] == interviews.MAX_INTERVIEW_ROUNDS
     assert any("已达最大轮数" in w for w in warnings)
+
+
+def test_persist_answer_turns_empty_question_into_summary(monkeypatch):
+    """B18 搬到这里：题库用尽、追问也没生成时，不能返回 continue + 空题面。"""
+    _patch_db(monkeypatch)
+    warnings: list[str] = []
+
+    data = interviews._persist_answer(
+        session_id="iv_test",
+        answer="我的回答",
+        question_index=1,
+        round_number=2,
+        eval_result={
+            "evaluation": "还行",
+            "score": 70,
+            "next_action": "continue",
+            "follow_up": None,
+            "overall_summary": None,
+        },
+        eval_warnings=warnings,
+        next_question="",
+    )
+
+    assert data["action"] == "summary"
+    assert "next_question" not in data
+    assert any("没有可用的下一题" in w for w in warnings)
+
+
+def test_persist_answer_uses_given_next_question(monkeypatch):
+    """题目由题库/追问给定时，模型在评价里带不带 follow_up 都不影响结果。"""
+    _patch_db(monkeypatch)
+    warnings: list[str] = []
+
+    data = interviews._persist_answer(
+        session_id="iv_test",
+        answer="我的回答",
+        question_index=0,
+        round_number=1,
+        eval_result={
+            "evaluation": "还行",
+            "score": 70,
+            "next_action": "continue",
+            "follow_up": "模型顺手写的下一题（应被忽略）",
+            "overall_summary": None,
+        },
+        eval_warnings=warnings,
+        next_question="题库里的第 2 题",
+    )
+
+    assert data["action"] == "continue"
+    assert data["next_question"] == "题库里的第 2 题"

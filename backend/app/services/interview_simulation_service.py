@@ -102,22 +102,23 @@ def _chunk_text(chunk) -> str:
         return "".join(parts)
     return ""
 
-# 只出第 1 题，不是"只面试一轮"：后续题目由每轮评价时模型根据回答自适应生成
-# （follow_up），所以开场造一份 3–6 题的题单从来用不上。
-# 实测（关键词在 docs/2026-10-18-模拟面试提速方案.md）：出 3 题带要点 28.5s / 1256 tokens，
-# 出 3 题无要点 5.8s，只出 1 题 2.6s。开场等待直接决定"点开始面试后多久看到题目"。
+# 出题分两段用：开场只要 1 题（用户等着看题），剩余题目后台补进题库（P2）。
+# 实测（docs/2026-10-18-模拟面试提速方案.md）：3 题带要点 28.5s / 1256 tokens，
+# 3 题无要点 5.8s，1 题 2.6s。开场等待直接决定"点开始面试后多久看到题目"，
+# 所以 count=1 走前台、count=N 走后台，prompt 只有一份，不会漂移。
 INTERVIEW_START_SYSTEM_PROMPT = """你是一位资深的面试官，擅长根据职位描述（JD）和候选人简历，出针对性的面试题。
-请严格分析提供的 JD 和简历，出**第 1 道**面试题，返回 **严格的 JSON**：
+请严格分析提供的 JD 和简历，出 {count} 道面试题，返回 **严格的 JSON**：
 
-- `questions` (list[object]): 面试题列表，**只包含 1 个元素**，每题包含：
+- `questions` (list[object]): 面试题列表，**{count} 个元素**，按出题顺序排列。每题包含：
   - `question` (str): 面试题目
   - `difficulty` (str): 难度级别，可选 "easy" / "medium" / "hard"
   - `direction` (str): 题目方向，可选 "python_backend" / "agent_ai" / "general"
 
 出题原则：
-1. 只有第 1 题：优先问简历里最值得深挖的那个项目，从具体技术决策切入，不要问泛泛的自我评价
-2. 题目应落在 JD 的核心技术栈上，与简历项目经验交叉
-3. 优先 medium 或 hard，能一层层追问出细节
+1. **第 1 题最重要**：优先问简历里最值得深挖的那个项目，从具体技术决策切入，
+   不要问泛泛的自我评价。它会立刻展示给候选人。
+2. 后面的题目覆盖 JD 里尚未考到的核心技术面，**不要与前面的题目重复同一话题**
+3. 难度递进，优先 medium 或 hard，能一层层追问出细节
 4. Python 后端方向侧重：Flask/FastAPI、MySQL、Redis、Docker、Linux、系统设计
 5. Agent/AI 方向侧重：LLM 原理、RAG、Agent 编排、Prompt Engineering、工具调用
 6. 通用方向侧重：项目架构、问题排查、工程化、团队协作
@@ -125,11 +126,14 @@ INTERVIEW_START_SYSTEM_PROMPT = """你是一位资深的面试官，擅长根据
 请确保：
 1. 输出的内容必须是 **纯 JSON 对象**，不要包含 markdown 代码块标记（```json）、不要额外解释。
 2. 题目要具体，不要过于宽泛。
-3. 不要在 JSON 之外输出"接下来第 2 题"之类的内容。
+3. 不要在 JSON 之外输出"接下来第 N 题"之类的内容。
 """
 
-INTERVIEW_ANSWER_SYSTEM_PROMPT = """你是一位资深的面试官，正在对候选人进行面试。
-你需要根据之前的面试对话、当前题目和候选人的回答，给出评价并继续提问。
+# P2：评价只评价。下一题由题库提供（或在低分时单独追问），所以这里不再要求
+# 模型在评价 JSON 里顺手生成 follow_up——那占了单轮输出的一半 token，而且
+# 它会把题目引向"刚刚聊过的话题"，与题库的覆盖面互相打架。
+INTERVIEW_EVAL_SYSTEM_PROMPT = """你是一位资深的面试官，正在对候选人进行面试。
+你需要根据之前的面试对话、当前题目和候选人的回答，给出评价。
 
 请严格分析，返回 **严格的 JSON**，包含以下字段（**请严格按此顺序输出**）：
 
@@ -137,10 +141,12 @@ INTERVIEW_ANSWER_SYSTEM_PROMPT = """你是一位资深的面试官，正在对�
   **这是第一个字段**：前端会边生成边展示，不要在它前面输出其他字段
 - `score` (int): 该回答的评分（满分 100 分）
 - `next_action` (str): 下一步行动，可选 "continue" / "summary"
-  - "continue": 继续提问，给出下一题或追问
-  - "summary": 认为面试可以结束，给出整体总结
-- `follow_up` (str | null): 如果 next_action 为 "continue"，这里是下一题或需要追问的内容；如果 next_action 为 "summary"，这里为 null
-- `overall_summary` (str | null): 如果 next_action 为 "summary"，这里是整体面试总结（包括表现亮点、待加强点、综合建议）；否则为 null
+  - "continue": 还可以继续面试
+  - "summary": 认为面试可以结束（候选人明显答不动、或已经聊透），此时必须给出 overall_summary
+- `overall_summary` (str | null): 如果 next_action 为 "summary"，这里是整体面试总结
+  （包括表现亮点、待加强点、综合建议）；否则为 null
+
+**不要输出下一道题**：下一题由题库或独立的追问环节决定。
 
 评分标准：
 1. 技术准确性（40 分）：概念理解是否正确，技术细节是否到位
@@ -153,6 +159,22 @@ INTERVIEW_ANSWER_SYSTEM_PROMPT = """你是一位资深的面试官，正在对�
 3. 整场面试最多进行 8 轮（含初始问题），超过后 next_action 应设为 "summary"。
 """
 
+# 只在"答崩了/答得太短"时用：针对这次回答追根问底，而不是换新题。
+INTERVIEW_FOLLOW_UP_SYSTEM_PROMPT = """你是一位资深的面试官。候选人刚回答了一道题，但回答不足以判断其真实水平。
+请针对这次回答**追问一个问题**，把候选人没讲清的部分挖出来。
+
+返回 **严格的 JSON**：
+
+- `follow_up` (str): 追问的题目，一到两句话，必须紧扣候选人刚才说的内容
+  （指出具体哪里含糊，或要求给出他声称做过的事的细节/数据）
+
+要求：
+1. 一次只问一个问题，不要复合提问，不要换成另一个话题
+2. 如果回答只是复述概念，就要求他结合自己项目里的具体数据和取舍
+3. **不要**在追问里替候选人回答，也不要给出参考答案
+4. 不要输出 JSON 之外的任何内容（不要 markdown 代码块）
+"""
+
 
 @dataclass
 class InterviewSimulationService:
@@ -162,8 +184,73 @@ class InterviewSimulationService:
         if not resume_text or not resume_text.strip():
             raise ValueError("简历文本不能为空")
 
-        content = self._invoke_start_llm(jd_text.strip(), resume_text.strip())
-        return self._parse_response(content)
+        return {"questions": self.generate_questions(jd_text, resume_text, count=1)}
+
+    def generate_questions(
+        self,
+        jd_text: str,
+        resume_text: str,
+        *,
+        count: int = 1,
+        exclude: list[str] | None = None,
+    ) -> list[dict]:
+        """生成 ``count`` 道面试题（开场用 1 道，后台补题用 N 道）。
+
+        ``exclude`` 里的题干会写进 prompt 让模型避开，避免后台补出来的题与已经
+        问过的那道重复。模型偶尔给多了或给空，这里只做裁剪和丢弃，不重试——
+        题库少一两道不影响面试（用尽后会自动转到追问）。
+        """
+        if count <= 0:
+            return []
+        text = (jd_text or "").strip()
+        resume = (resume_text or "").strip()
+        if not text or not resume:
+            raise ValueError("JD 文本与简历文本都不能为空")
+
+        content = self._invoke_start_llm(text, resume, count, exclude or [])
+        result = self._parse_response(content)
+        questions = [
+            q
+            for q in (result.get("questions") or [])
+            if isinstance(q, dict) and str(q.get("question") or "").strip()
+        ]
+        return questions[:count]
+
+    def generate_follow_up(
+        self,
+        jd_text: str,
+        resume_text: str,
+        history: list[dict],
+        current_question: str,
+        user_answer: str,
+        round_number: int,
+    ) -> str:
+        """针对一次回答追根问底。失败抛 ValueError，由调用方降级到题库。"""
+        llm = self._ensure_follow_up_llm()
+        history_text = ""
+        for item in history:
+            role = item.get("role", "")
+            content = item.get("content", "")
+            history_text += f"{'面试官' if role == 'assistant' else '候选人'}：{content}\n\n"
+
+        user_prompt = (
+            f"## JD 原文\n\n{jd_text}\n\n"
+            f"## 简历原文\n\n{resume_text}\n\n"
+            f"## 面试历史\n{history_text if history_text else '（无历史）'}\n"
+            f"## 当前轮次\n第 {round_number} 轮\n\n"
+            f"## 当前题目\n{current_question}\n\n"
+            f"## 候选人回答\n{user_answer}\n"
+        )
+        messages = [
+            SystemMessage(content=INTERVIEW_FOLLOW_UP_SYSTEM_PROMPT),
+            HumanMessage(content=user_prompt),
+        ]
+        content = llm.invoke(messages).content or ""
+        data = self._parse_response(content)
+        question = str(data.get("follow_up") or data.get("question") or "").strip()
+        if not question:
+            raise ValueError("模型没有给出追问")
+        return question
 
     def evaluate_answer(
         self,
@@ -184,15 +271,26 @@ class InterviewSimulationService:
 
     def _ensure_start_llm(self) -> ChatTongyi:
         # 模型随请求走（ContextVar 注入，chat Agent 工具链内同样生效）。
-        # 出题是"给材料 → 出一道题"，不需要推理链。P0 关掉思考后仍是 20s，
-        # 因为瓶颈在输出量：一份 3–6 题带要点的题单有 1300+ tokens，而实际只用到第 1 题。
-        # P1 把 prompt 收成单题后约 94 tokens，上限 500 是四倍余量。
+        # 出题是"给材料 → 出题"，不需要推理链。P0 关思考后仍是 20s，因为瓶颈在输出量：
+        # 一份 3–6 题带要点的题单有 1300+ tokens。P1 收成单题后约 94 tokens。
+        # P2 由调用方传 count：开场 1 题（500 足够），后台补题 3 题（上限放开到 900）。
         return build_chat_llm(
             model=current_chat_model(),
             temperature=0.5,
             top_p=0.8,
             enable_thinking=False,
-            max_tokens=500,
+            max_tokens=900,
+        )
+
+    def _ensure_follow_up_llm(self) -> ChatTongyi:
+        # 追问只有一两句话，输出短；但要在"评价已经显示出来之后"才需要，用户能感知到，
+        # 所以温度略高一点让追问更贴住原话，同时上限收紧避免模型长篇跑偏。
+        return build_chat_llm(
+            model=current_chat_model(),
+            temperature=0.6,
+            top_p=0.8,
+            enable_thinking=False,
+            max_tokens=220,
         )
 
     def _ensure_answer_llm(self, streaming: bool = False) -> ChatTongyi:
@@ -211,15 +309,27 @@ class InterviewSimulationService:
         )
 
 
-    def _invoke_start_llm(self, jd_text: str, resume_text: str) -> str:
+    def _invoke_start_llm(
+        self,
+        jd_text: str,
+        resume_text: str,
+        count: int = 1,
+        exclude: list[str] | None = None,
+    ) -> str:
         llm = self._ensure_start_llm()
+        exclude_text = ""
+        if exclude:
+            listed = "\n".join(f"- {item}" for item in exclude if item)
+            if listed:
+                exclude_text = f"## 已经问过的题目（不要重复，也不要换个说法再问一遍）\n{listed}\n\n"
         user_prompt = (
             f"## JD 原文\n\n{jd_text}\n\n"
             f"## 简历原文\n\n{resume_text}\n\n"
-            f"请根据以上 JD 和简历，出第 1 道面试题。"
+            f"{exclude_text}"
+            f"请根据以上 JD 和简历，出 {count} 道面试题。"
         )
         messages = [
-            SystemMessage(content=INTERVIEW_START_SYSTEM_PROMPT),
+            SystemMessage(content=INTERVIEW_START_SYSTEM_PROMPT.format(count=count)),
             HumanMessage(content=user_prompt),
         ]
         response = llm.invoke(messages)
@@ -250,7 +360,7 @@ class InterviewSimulationService:
             f"## 候选人回答\n{user_answer}\n"
         )
         return [
-            SystemMessage(content=INTERVIEW_ANSWER_SYSTEM_PROMPT),
+            SystemMessage(content=INTERVIEW_EVAL_SYSTEM_PROMPT),
             HumanMessage(content=user_prompt),
         ]
 
@@ -288,9 +398,9 @@ class InterviewSimulationService:
         - 丢一帧最多少显示几个字，下一帧自动补齐，不需要补偿逻辑；
         - 代价是每帧多几十字节，相对一次 LLM 调用可以忽略。
 
-        为什么不是"评价和下一题分两次调用"：那会把单轮变成串行两次 LLM 往返
-        （首字更快但拿到下一题更慢），而一次调用的 JSON 本来就能边出边解析。
-        拆成两次留给"题库化"那一档（P2），届时下一题不再需要模型生成。
+        为什么不是"评价和下一题分两次调用"：P1 时是为了不把单轮变成串行两次 LLM 往返。
+        P2 之后下一题默认来自题库，评价这条链路**完全不产生题目**；只有低分/答得太短
+        时才会另起一次 `generate_follow_up`，那时候用户已经看到评价了，多等一两秒值得。
         """
         llm = self._ensure_answer_llm(streaming=True)
         messages = self._build_answer_messages(
@@ -326,8 +436,11 @@ def normalize_interview_evaluation(result: dict) -> tuple[dict, list[str]]:
     模型偶发漏字段/类型错乱，直接透传会造成两类静默失败：
     1. 缺 score 时被上层 ``.get("score", 0)`` 兜底成 0 分落库——把"模型没返回"
        说成"你得了 0 分"；这里改为 score=None 并告警。
-    2. next_action="continue" 却没有 follow_up——前端拿到空下一题白屏卡死；
-       这里转为 summary 让面试正常收尾。
+    2. next_action 返回了未知值；这里回退 continue。
+
+    注意：这里**不再**把"continue 但没有下一题"转成 summary。P2 起下一题由题库
+    或追问环节决定，模型本来就不会给 follow_up；"真的没有下一题"的判定移到了
+    ``_persist_answer``（只有那里同时知道题库和追问的结果）。
     """
     warnings: list[str] = []
 
@@ -351,7 +464,7 @@ def normalize_interview_evaluation(result: dict) -> tuple[dict, list[str]]:
     else:
         warnings.append("模型未返回有效评分，本轮标记为未评分")
 
-    # next_action：非法值回退 continue（并在无下一题时由下方转为 summary）
+    # next_action：非法值回退 continue
     next_action = result.get("next_action")
     if next_action not in _VALID_ACTIONS:
         if next_action is not None:
@@ -360,10 +473,6 @@ def normalize_interview_evaluation(result: dict) -> tuple[dict, list[str]]:
 
     follow_up_raw = result.get("follow_up")
     follow_up = str(follow_up_raw).strip() if follow_up_raw else ""
-
-    if next_action == "continue" and not follow_up:
-        next_action = "summary"
-        warnings.append("模型未给出下一题，面试提前结束")
 
     overall_summary_raw = result.get("overall_summary")
     normalized = {

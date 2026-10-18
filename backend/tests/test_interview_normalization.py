@@ -1,7 +1,9 @@
 """T14：面试评估结果规范化测试（B17/B18）。
 
 B17：模型缺 score 时置 None 并告警，不伪造 0 分落库。
-B18：continue 却没有下一题时转 summary，避免前端白题卡死。
+B18：空下一题不能返回 continue（前端会白题卡死）——P2 之后下一题由题库/追问
+决定，模型本来就不给 follow_up，所以这条判断搬到了 ``_persist_answer``
+（只有那里同时知道题库与追问的结果），normalize 不再擅自把 continue 改成 summary。
 """
 
 from __future__ import annotations
@@ -56,14 +58,14 @@ class TestActionNormalization:
         assert result["next_action"] == "continue"
         assert warnings == []
 
-    def test_continue_without_follow_up_converts_to_summary(self):
-        """B18 核心：空下一题不再返回 continue，前端不会白题卡死。"""
+    def test_continue_without_follow_up_stays_continue(self):
+        """P2：下一题由题库提供，模型不给 follow_up 是正常的，不能因此收尾。"""
         result, warnings = normalize_interview_evaluation(
-            {"evaluation": "评价", "score": 80, "next_action": "continue", "follow_up": ""}
+            {"evaluation": "评价", "score": 80, "next_action": "continue"}
         )
-        assert result["next_action"] == "summary"
+        assert result["next_action"] == "continue"
         assert result["follow_up"] is None
-        assert any("未给出下一题" in w for w in warnings)
+        assert not any("下一题" in w for w in warnings)
 
     def test_unknown_action_falls_back_to_continue(self):
         result, warnings = normalize_interview_evaluation(
@@ -71,14 +73,6 @@ class TestActionNormalization:
         )
         assert result["next_action"] == "continue"
         assert any("next_action" in w for w in warnings)
-
-    def test_unknown_action_without_follow_up_becomes_summary(self):
-        result, warnings = normalize_interview_evaluation(
-            {"evaluation": "评价", "score": 80, "next_action": "finish", "follow_up": None}
-        )
-        assert result["next_action"] == "summary"
-        assert any("next_action" in w for w in warnings)
-        assert any("未给出下一题" in w for w in warnings)
 
     def test_summary_fields_preserved(self):
         result, warnings = normalize_interview_evaluation(
@@ -93,7 +87,7 @@ class TestActionNormalization:
         result, warnings = normalize_interview_evaluation({})
         assert result["evaluation"] == ""
         assert result["score"] is None
-        assert result["next_action"] == "summary"  # 无 follow_up，回退后转 summary
+        assert result["next_action"] == "continue"  # 非法/缺失一律回退继续，由落库判断兜底
         assert result["follow_up"] is None
         assert result["overall_summary"] is None
-        assert len(warnings) >= 2
+        assert len(warnings) >= 1

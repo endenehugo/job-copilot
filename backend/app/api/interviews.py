@@ -14,7 +14,7 @@ import logging
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -41,10 +41,22 @@ from app.services.interview_simulation_service import (
     MAX_INTERVIEW_ROUNDS,
     normalize_interview_evaluation,
 )
+from app.services.question_bank import (
+    NextQuestion,
+    QuestionBank,
+    bank_lock,
+    dump_bank,
+    parse_bank,
+    plan_next_question,
+)
 
 router = APIRouter(prefix="/api/v1")
 
 logger = logging.getLogger(__name__)
+
+# 开场只生成 1 题（用户等着看题），剩下的在后台补进题库。
+# 3 题约 5.8s，正好落在"用户读完第 1 题并开始打字"的窗口里，前台完全感知不到。
+PREFETCH_QUESTIONS = 3
 
 
 def _read_latest_resume_text(store_service, conversation_id: str) -> str:
@@ -63,7 +75,11 @@ def _read_latest_resume_text(store_service, conversation_id: str) -> str:
 
 
 @router.post("/interview/start")
-def start_interview(payload: InterviewStartRequest, role: str = Depends(get_current_role)) -> dict:
+def start_interview(
+    payload: InterviewStartRequest,
+    background_tasks: BackgroundTasks,
+    role: str = Depends(get_current_role),
+) -> dict:
     conversation_id = payload.conversation_id.strip()
     direction = payload.direction.strip() or "general"
     jd_text = payload.jd_text.strip()
@@ -114,6 +130,10 @@ def start_interview(payload: InterviewStartRequest, role: str = Depends(get_curr
     now = datetime.now()
     session_id = f"iv_{now.strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6]}"
 
+    # 开场这 1 题立刻发出，其余题目放进题库由后台补齐（见 _prefetch_question_bank）。
+    # cursor=1 表示"已经出过 1 题"，下一轮从 questions[1] 取。
+    bank = QuestionBank(questions=questions, cursor=1, state="pending")
+
     session = DatabaseManager.get_session()
     try:
         with session.begin():
@@ -125,7 +145,7 @@ def start_interview(payload: InterviewStartRequest, role: str = Depends(get_curr
                 direction=direction,
                 status="in_progress",
                 round_count=0,
-                initial_questions=json.dumps(questions, ensure_ascii=False),
+                initial_questions=dump_bank(bank),
                 created_at=now,
                 updated_at=now,
             )
@@ -143,6 +163,18 @@ def start_interview(payload: InterviewStartRequest, role: str = Depends(get_curr
     finally:
         DatabaseManager.remove_session()
 
+    # 后台补题：不阻塞本次响应。失败只是题库停留在 pending/failed，
+    # 作答时自动退回"现场生成追问"，面试不会卡住。
+    background_tasks.add_task(
+        _prefetch_question_bank,
+        session_id,
+        jd_text,
+        resume_text,
+        payload.model,
+        role,
+        [str(q.get("question") or "") for q in questions],
+    )
+
     return ok(
         {
             "session_id": session_id,
@@ -150,9 +182,92 @@ def start_interview(payload: InterviewStartRequest, role: str = Depends(get_curr
             "current_question": questions[0],
             "question_index": 0,
             "total_questions": len(questions),
+            "bank_state": bank.state,
         },
         message="面试已开始",
     )
+
+
+def _update_bank(session_id: str, mutate) -> bool:
+    """在锁内"读整列 → 改 → 写回"，供后台补题与游标推进共用。
+
+    读必须发生在写事务里：后台补题与作答落库都会重写 initial_questions，
+    用请求早先读到的快照写回去会把对方刚写的内容抹掉（丢题或游标回退）。
+    """
+    with bank_lock:
+        session = DatabaseManager.get_session()
+        try:
+            with session.begin():
+                entity = InterviewSessionRepository.get_by_session_id(session, session_id)
+                if entity is None:
+                    return False
+                bank = parse_bank(entity.initial_questions)
+                mutate(bank)
+                InterviewSessionRepository.update(
+                    session, entity, initial_questions=dump_bank(bank)
+                )
+                return True
+        finally:
+            DatabaseManager.remove_session()
+
+
+def _append_bank_questions(session_id: str, extra: list[dict]) -> bool:
+    def mutate(bank: QuestionBank) -> None:
+        seen = {str(q.get("question") or "").strip() for q in bank.questions}
+        for item in extra:
+            text = str(item.get("question") or "").strip()
+            if text and text not in seen:
+                bank.questions.append(item)
+                seen.add(text)
+        bank.state = "ready"
+
+    return _update_bank(session_id, mutate)
+
+
+def _mark_bank_state(session_id: str, state: str) -> bool:
+    def mutate(bank: QuestionBank) -> None:
+        # 已经补齐过就别再改回 failed：补题失败只影响"还能不能再问一道"，
+        # 把 ready 改成 failed 会让剩余题目白丢。
+        if bank.state != "ready":
+            bank.state = state
+
+    return _update_bank(session_id, mutate)
+
+
+def _prefetch_question_bank(
+    session_id: str,
+    jd_text: str,
+    resume_text: str,
+    model: str,
+    role: str,
+    asked: list[str],
+) -> None:
+    """后台补齐题库：开场只出 1 题，剩下的 PREFETCH_QUESTIONS 道在这里补。
+
+    BackgroundTasks 在响应发出之后才执行（同步函数进线程池），所以这段耗时用户
+    完全看不到。三种需要兜住的情况：
+
+    - 补题失败（额度/超时/JSON 坏）：把状态标成 failed，作答时退回现场追问；
+    - 会话已被删除或已完成：`_update_bank` 找不到行，直接放弃；
+    - 用户手快，第一题期间就作答推进了游标：`_update_bank` 在锁内重读，
+      只追加题目、不动 cursor，所以不会把游标写回去。
+    """
+    try:
+        with request_model_scope(model, role):
+            extra = get_interview_simulation_service().generate_questions(
+                jd_text, resume_text, count=PREFETCH_QUESTIONS, exclude=asked
+            )
+    except Exception as exc:  # noqa: BLE001 - 后台任务不能把异常抛给已结束的响应
+        logger.warning("后台补题失败，本场将改用现场追问: %s", exc)
+        _mark_bank_state(session_id, "failed")
+        return
+
+    if not extra:
+        logger.warning("后台补题返回空题单，本场将改用现场追问")
+        _mark_bank_state(session_id, "failed")
+        return
+
+    _append_bank_questions(session_id, extra)
 
 
 class _InterviewFlowError(Exception):
@@ -180,6 +295,9 @@ def _load_answer_context(session_id: str) -> dict:
 
         conversation_id = interview_session.conversation_id
         current_round = interview_session.round_count
+        # 题库快照：只用于"这一轮该问什么"的决策。真正的游标推进在落库事务里
+        # 用锁内重读的值，避免和后台补题互相覆盖。
+        bank = parse_bank(interview_session.initial_questions)
 
         messages = InterviewMessageRepository.list_by_session_id(session, session_id)
         current_question = ""
@@ -205,6 +323,7 @@ def _load_answer_context(session_id: str) -> dict:
         "current_question": current_question,
         "history": history,
         "jd_text": jd_text,
+        "bank": bank,
         "resume_text": _read_latest_resume_text(get_conversation_store_service(), conversation_id),
     }
 
@@ -217,8 +336,10 @@ def _persist_answer(
     round_number: int,
     eval_result: dict,
     eval_warnings: list[str],
+    next_question: str = "",
+    bank_index: int | None = None,
 ) -> dict:
-    """事务二：落库（用户回答 + 评价 + 下一题 + 会话状态）并构造响应 data。
+    """事务二：落库（用户回答 + 评价 + 下一题 + 题库游标 + 会话状态）并构造响应 data。
 
     同样被两个端点共用：轮次上限兜底、status 流转、question_index 推进
     只有一处实现，就不会出现"流式落库少了 next_question"这类非对称 bug。
@@ -226,55 +347,62 @@ def _persist_answer(
     score = eval_result.get("score")
     evaluation = eval_result.get("evaluation", "")
     next_action = eval_result.get("next_action", "continue")
-    follow_up = eval_result.get("follow_up")
     overall_summary = eval_result.get("overall_summary")
+
+    # 下一题由调用方（题库/追问）决定；调用方没给时退回模型在评价里带的 follow_up，
+    # 这样 P1 及更早的老场次行为不变。
+    next_question = (next_question or "").strip() or str(eval_result.get("follow_up") or "").strip()
 
     # 硬性轮次上限：模型未按约定收尾时兜底结束，避免无限追问
     if next_action != "summary" and round_number >= MAX_INTERVIEW_ROUNDS:
         next_action = "summary"
         eval_warnings.append(f"已达最大轮数（{MAX_INTERVIEW_ROUNDS}），面试自动结束")
+    elif next_action != "summary" and not next_question:
+        # 题库用尽 + 追问没生成出来：继续只会给前端一个空题面，直接正常收尾
+        next_action = "summary"
+        eval_warnings.append("没有可用的下一题（题库已用尽且追问未生成），面试提前结束")
 
     now = datetime.now()
-    session = DatabaseManager.get_session()
-    try:
-        with session.begin():
-            interview_session = InterviewSessionRepository.get_by_session_id(session, session_id)
-            InterviewMessageRepository.create(
-                session,
-                message_id=f"imsg_{uuid.uuid4().hex[:16]}",
-                session_id=session_id,
-                role="user",
-                content=answer,
-                score=None,
-                evaluation="",
-                msg_type="answer",
-                created_at=now,
-            )
-            InterviewMessageRepository.create(
-                session,
-                message_id=f"imsg_{uuid.uuid4().hex[:16]}",
-                session_id=session_id,
-                role="assistant",
-                content=evaluation,
-                score=score,
-                evaluation=evaluation,
-                msg_type="evaluation",
-                created_at=now,
-            )
-
-            if next_action == "summary":
-                InterviewSessionRepository.update(
+    # 锁包住整个写事务：题库游标与后台补题都会重写 initial_questions
+    with bank_lock:
+        session = DatabaseManager.get_session()
+        try:
+            with session.begin():
+                interview_session = InterviewSessionRepository.get_by_session_id(session, session_id)
+                InterviewMessageRepository.create(
                     session,
-                    interview_session,
-                    status="completed",
-                    round_count=round_number,
-                    total_score=score,
-                    overall_summary=overall_summary or evaluation,
-                    updated_at=now,
+                    message_id=f"imsg_{uuid.uuid4().hex[:16]}",
+                    session_id=session_id,
+                    role="user",
+                    content=answer,
+                    score=None,
+                    evaluation="",
+                    msg_type="answer",
+                    created_at=now,
                 )
-            else:
-                next_question = follow_up or ""
-                if next_question:
+                InterviewMessageRepository.create(
+                    session,
+                    message_id=f"imsg_{uuid.uuid4().hex[:16]}",
+                    session_id=session_id,
+                    role="assistant",
+                    content=evaluation,
+                    score=score,
+                    evaluation=evaluation,
+                    msg_type="evaluation",
+                    created_at=now,
+                )
+
+                if next_action == "summary":
+                    InterviewSessionRepository.update(
+                        session,
+                        interview_session,
+                        status="completed",
+                        round_count=round_number,
+                        total_score=score,
+                        overall_summary=overall_summary or evaluation,
+                        updated_at=now,
+                    )
+                else:
                     InterviewMessageRepository.create(
                         session,
                         message_id=f"imsg_{uuid.uuid4().hex[:16]}",
@@ -286,14 +414,17 @@ def _persist_answer(
                         msg_type="question",
                         created_at=now,
                     )
-                InterviewSessionRepository.update(
-                    session,
-                    interview_session,
-                    round_count=round_number,
-                    updated_at=now,
-                )
-    finally:
-        DatabaseManager.remove_session()
+                    update_fields = {"round_count": round_number, "updated_at": now}
+                    if bank_index is not None:
+                        # 题目取自题库：把游标推到它后面。这里必须用锁内重读的题库
+                        # （上面刚读过这一行），否则会把后台补题的追加写回去。
+                        fresh = parse_bank(interview_session.initial_questions)
+                        if bank_index >= fresh.cursor:
+                            fresh.cursor = bank_index + 1
+                            update_fields["initial_questions"] = dump_bank(fresh)
+                    InterviewSessionRepository.update(session, interview_session, **update_fields)
+        finally:
+            DatabaseManager.remove_session()
 
     if next_action == "summary":
         return {
@@ -311,10 +442,48 @@ def _persist_answer(
         "action": "continue",
         "evaluation": evaluation,
         "score": score,
-        "next_question": follow_up or "",
+        "next_question": next_question,
         "question_index": question_index + 1,
         "total_rounds": round_number,
     }
+
+
+def _plan_next(
+    answer_ctx: dict,
+    *,
+    eval_result: dict,
+    answer: str,
+    round_number: int,
+    model: str,
+    role: str,
+) -> NextQuestion:
+    """决定本轮之后问什么：低分追问 → 题库顺序 → 现场生成 → 老逻辑的 follow_up。
+
+    追问是一次额外的 LLM 调用（约 1–2s），只在这个人答崩了的时候才花；
+    正常轮次走题库，几乎是零成本——这正是 P2 想要的形态。
+    """
+    if round_number >= MAX_INTERVIEW_ROUNDS:
+        # 这一轮之后就收尾，没必要为"不会用到的下一题"再花一次模型调用
+        return NextQuestion()
+
+    def _follow_up() -> str:
+        with request_model_scope(model, role):
+            return get_interview_simulation_service().generate_follow_up(
+                jd_text=answer_ctx["jd_text"],
+                resume_text=answer_ctx["resume_text"] or "",
+                history=answer_ctx["history"],
+                current_question=answer_ctx["current_question"],
+                user_answer=answer,
+                round_number=round_number,
+            )
+
+    return plan_next_question(
+        answer_ctx["bank"],
+        score=eval_result.get("score"),
+        answer=answer,
+        eval_follow_up=str(eval_result.get("follow_up") or ""),
+        follow_up_factory=_follow_up,
+    )
 
 
 @router.post("/interview/answer")
@@ -345,9 +514,18 @@ def answer_interview(payload: InterviewAnswerRequest, role: str = Depends(get_cu
                 user_answer=answer,
                 round_number=round_number,
             )
+            eval_result, eval_warnings = normalize_interview_evaluation(eval_result)
+            plan = _plan_next(
+                ctx,
+                eval_result=eval_result,
+                answer=answer,
+                round_number=round_number,
+                model=payload.model,
+                role=role,
+            )
     except ValueError as exc:
         return fail(str(exc), code=400)
-    eval_result, eval_warnings = normalize_interview_evaluation(eval_result)
+    eval_warnings.extend(plan.warnings)
 
     data = _persist_answer(
         session_id=session_id,
@@ -356,7 +534,10 @@ def answer_interview(payload: InterviewAnswerRequest, role: str = Depends(get_cu
         round_number=round_number,
         eval_result=eval_result,
         eval_warnings=eval_warnings,
+        next_question=plan.question,
+        bank_index=plan.bank_index,
     )
+    data["question_source"] = plan.source
     is_summary = data["action"] == "summary"
     return ok(
         data,
@@ -446,6 +627,19 @@ async def answer_interview_stream(
                     },
                 )
 
+                # 下一题：正常轮次直接命中题库（毫秒级），只有答崩了才现场追问（1–2s）。
+                # 放在 score 之后，所以用户先看到评价和分数，再等题目。
+                plan = await run_in_threadpool(
+                    _plan_next,
+                    answer_ctx,
+                    eval_result=eval_result,
+                    answer=answer,
+                    round_number=round_number,
+                    model=payload.model,
+                    role=role,
+                )
+                eval_warnings.extend(plan.warnings)
+
                 result = await run_in_threadpool(
                     _persist_answer,
                     session_id=session_id,
@@ -454,9 +648,15 @@ async def answer_interview_stream(
                     round_number=round_number,
                     eval_result=eval_result,
                     eval_warnings=eval_warnings,
+                    next_question=plan.question,
+                    bank_index=plan.bank_index,
                 )
+                result["question_source"] = plan.source
                 if result["action"] == "continue" and result.get("next_question"):
-                    yield sse("question", {"question": result["next_question"]})
+                    yield sse(
+                        "question",
+                        {"question": result["next_question"], "source": plan.source},
+                    )
                 # warnings 要在落库之后再取：_persist_answer 可能追加"已达最大轮数"
                 yield sse("done", {**result, "warnings": eval_warnings or None})
         except ValueError as exc:
@@ -539,6 +739,7 @@ def interview_detail(session_id: str = Query(default="")) -> dict:
             return fail("面试会话不存在", code=404)
 
         messages = InterviewMessageRepository.list_by_session_id(session, session_id)
+        bank = parse_bank(interview_session.initial_questions)
         return ok({
             "session": {
                 "session_id": interview_session.session_id,
@@ -549,11 +750,14 @@ def interview_detail(session_id: str = Query(default="")) -> dict:
                 "round_count": interview_session.round_count,
                 "total_score": interview_session.total_score,
                 "overall_summary": interview_session.overall_summary,
-                "initial_questions": (
-                    json.loads(interview_session.initial_questions)
-                    if interview_session.initial_questions
-                    else []
-                ),
+                # 题单：老场次是纯 list，P2 起是题库包装里的 questions，这里统一成 list
+                "initial_questions": bank.questions,
+                # 题库状态：pending 表示后台还在补题（此时作答会退回现场追问）
+                "question_bank": {
+                    "size": len(bank.questions),
+                    "cursor": bank.cursor,
+                    "state": bank.state,
+                },
                 "created_at": interview_session.created_at.isoformat() if interview_session.created_at else "",
                 "updated_at": interview_session.updated_at.isoformat() if interview_session.updated_at else "",
             },
