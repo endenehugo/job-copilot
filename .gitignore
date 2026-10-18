@@ -56,3 +56,7 @@ deploy/_artifacts/
 
 # 工作笔记（本地会话数据，不入库）
 .workbuddy/
+
+# 测试素材：源文件（真实简历/JD 文本）入库，运行输出与验证截图不入库
+tools/fixtures/last-run.json
+tools/fixtures/*.png
