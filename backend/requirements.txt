@@ -15,6 +15,12 @@ python-dotenv==1.0.1
 # 不显式锁定的话部署镜像 import 时才会报 ModuleNotFoundError
 jinja2==3.1.6
 
+# 管理员认证（core/security.py 直接 import，静态依赖扫描很容易漏）
+# 两者都缺过：只在开发机 conda 环境里存在，服务器 venv 从未装过，
+# 一旦发布就是启动即 ModuleNotFoundError，表现为 systemd 起不来 + 健康检查失败。
+bcrypt==3.2.0
+PyJWT==2.8.0
+
 # 数据库
 SQLAlchemy==2.0.41
 PyMySQL==1.1.1
