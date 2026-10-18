@@ -33,6 +33,8 @@ services:
       APP_ENV: prod
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:?请在 .env 中设置}
       METASO_API_KEY: ${METASO_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      MULTIMODAL_MODEL: ${MULTIMODAL_MODEL:-}
       MYSQL_HOST: mysql
       MYSQL_PORT: "3306"
       MYSQL_USER: ${MYSQL_USER:-jobcopilot}

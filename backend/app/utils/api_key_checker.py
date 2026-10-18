@@ -150,7 +150,7 @@ def check_embedding_api(key: str) -> CheckResult:
 
 
 def check_multimodal_api(key: str) -> CheckResult:
-    """用 qwen-vl-plus 最小多模态请求验证 Key 权限。"""
+    """用配置的多模态模型最小请求验证 Key 权限（默认 qwen-vl-plus，可由 MULTIMODAL_MODEL 覆盖）。"""
     try:
         import dashscope
     except ImportError:
@@ -161,8 +161,15 @@ def check_multimodal_api(key: str) -> CheckResult:
         )
 
     try:
+        from app.core.config import settings
+
+        model = settings.multimodal_model
+    except Exception:  # noqa: BLE001  # 检测器可独立于应用配置使用
+        model = "qwen-vl-plus"
+
+    try:
         resp: Any = dashscope.MultiModalConversation.call(
-            model="qwen-vl-plus",
+            model=model,
             messages=[
                 {
                     "role": "user",
@@ -184,7 +191,7 @@ def check_multimodal_api(key: str) -> CheckResult:
         return CheckResult(
             name="多模态 API",
             passed=True,
-            message="qwen-vl-plus 多模态模型可正常调用，支持图片识别。",
+            message=f"{model} 多模态模型可正常调用，支持图片识别。",
         )
     return CheckResult(
         name="多模态 API",
