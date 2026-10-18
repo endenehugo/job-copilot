@@ -1,0 +1,11 @@
+<Slide style={{ width: 1280, height: 720, background: '#FAFCFE', flexDirection: 'row', overflow: 'hidden' }}>
+  <Box style={{ flex: 1, height: 720 }}>
+    <Image src="assets/section_data.png" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+  </Box>
+  <Box style={{ width: 704, height: 720, background: 'linear-gradient(135deg, #0F4C81 0%, #2E6BA8 100%)', padding: '0 72px', justifyContent: 'center' }}>
+    <Text style={{ fontSize: 96, fontWeight: 'bold', color: 'rgba(255,255,255,0.5)', fontFamily: "'Inter','Helvetica Neue',Arial,sans-serif" }}>02</Text>
+    <Text style={{ fontSize: 58, fontWeight: 'bold', color: '#FFFFFF', marginTop: 8 }}>核心亮点与实测数据</Text>
+    <Box style={{ width: 48, height: 6, background: '#E8590C', marginTop: 26 }} />
+    <Text style={{ fontSize: 20, color: 'rgba(255,255,255,0.85)', lineHeight: 1.7, marginTop: 24 }}>每组结论都来自自建基准，而非感觉——包括一次被自己的数据否决的方案。</Text>
+  </Box>
+</Slide>

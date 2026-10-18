@@ -1,0 +1,28 @@
+<Slide style={{ width: 1280, height: 720, background: '#FAFCFE', padding: '0 72px', overflow: 'hidden' }}>
+  <Box style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 60, marginTop: 110 }}>
+    <Box style={{ width: 520 }}>
+      <Text style={{ fontSize: 130, fontWeight: 'bold', color: '#E8590C', lineHeight: 1.0, fontFamily: "'Inter','Helvetica Neue',Arial,sans-serif" }}>5.8×</Text>
+      <Text style={{ fontSize: 26, fontWeight: 'bold', color: '#0F4C81', marginTop: 20 }}>重排耗时 21.4s → 3.7s</Text>
+      <Text style={{ fontSize: 18, color: '#5E7B99', marginTop: 8, lineHeight: 1.6 }}>逐篇串行 N 次 LLM 调用，重构为 listwise 单次调用；Top-4 重合率 0.71，质量无损失。</Text>
+    </Box>
+    <Box style={{ flex: 1, flexDirection: 'column', gap: 30, paddingBottom: 6 }}>
+      <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 24 }}>
+        <Text style={{ fontSize: 52, fontWeight: 'bold', color: '#0F4C81', width: 200, fontFamily: "'Inter','Helvetica Neue',Arial,sans-serif" }}>3.7s</Text>
+        <Text style={{ fontSize: 18, color: '#5E7B99', flex: 1, lineHeight: 1.55 }}>首字节 TTFF 从 15~30s 降至 3.7s，用户感知等待净减约 15 秒。</Text>
+      </Box>
+      <Box style={{ height: 1, background: '#DCE9F5' }} />
+      <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 24 }}>
+        <Text style={{ fontSize: 52, fontWeight: 'bold', color: '#0F4C81', width: 200, fontFamily: "'Inter','Helvetica Neue',Arial,sans-serif" }}>0.14~0.33</Text>
+        <Text style={{ fontSize: 18, color: '#5E7B99', flex: 1, lineHeight: 1.55 }}>RRF 与 LLM 排序的 Top-4 重合率——零成本方案被自建基准否决。</Text>
+      </Box>
+      <Box style={{ height: 1, background: '#DCE9F5' }} />
+      <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 24 }}>
+        <Text style={{ fontSize: 52, fontWeight: 'bold', color: '#0F4C81', width: 200, fontFamily: "'Inter','Helvetica Neue',Arial,sans-serif" }}>155 项</Text>
+        <Text style={{ fontSize: 18, color: '#5E7B99', flex: 1, lineHeight: 1.55 }}>pytest 全离线零网络，覆盖降级链、事件顺序契约与降级信封。</Text>
+      </Box>
+    </Box>
+  </Box>
+  <Box style={{ background: '#DCE9F5', borderRadius: 10, padding: '18px 28px', marginTop: 56, borderLeft: '5px solid #E8590C' }}>
+    <Text style={{ fontSize: 21, color: '#0F4C81', lineHeight: 1.6 }}>先建基准、再动手优化、接受被数据否决——这是本项目的工程方法论。</Text>
+  </Box>
+</Slide>

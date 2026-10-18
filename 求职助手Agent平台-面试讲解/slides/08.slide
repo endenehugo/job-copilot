@@ -1,0 +1,58 @@
+<Slide style={{ width: 1280, height: 720, background: '#FAFCFE', padding: '0 72px', overflow: 'hidden' }}>
+  <Box style={{ paddingTop: 26 }}>
+    <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#0F4C81' }}>Agent 工具循环与容错</Text>
+    <Box style={{ width: 36, height: 4, background: '#E8590C', marginTop: 10 }} />
+  </Box>
+  <Box style={{ flexDirection: 'row', gap: 36, marginTop: 24, height: 450 }}>
+    <Box style={{ width: 700, background: '#FFFFFF', border: '0.5px solid #DCE9F5', borderRadius: 12, padding: 14, justifyContent: 'center' }}>
+      <svg width={672} height={422} viewBox='0 0 672 422'>
+        <rect x='30' y='8' width='400' height='48' rx='8' fill='#DCE9F5' />
+        <text x='230' y='38' textAnchor='middle' dominantBaseline='middle' fill='#0F4C81' fontSize='16' fontWeight='bold'>System 提示 + 动态技能目录</text>
+        <line x1='230' y1='56' x2='230' y2='72' stroke='#7BA7D9' strokeWidth='1.5' />
+        <rect x='30' y='72' width='400' height='48' rx='8' fill='#DCE9F5' />
+        <text x='230' y='102' textAnchor='middle' dominantBaseline='middle' fill='#0F4C81' fontSize='16' fontWeight='bold'>History 压缩后历史 + Human 输入</text>
+        <line x1='230' y1='120' x2='230' y2='136' stroke='#7BA7D9' strokeWidth='1.5' />
+        <rect x='30' y='136' width='400' height='48' rx='8' fill='#0F4C81' />
+        <text x='230' y='166' textAnchor='middle' dominantBaseline='middle' fill='#FFFFFF' fontSize='16' fontWeight='bold'>AIMessage · tool_calls</text>
+        <line x1='230' y1='184' x2='230' y2='200' stroke='#7BA7D9' strokeWidth='1.5' />
+        <rect x='30' y='200' width='400' height='48' rx='8' fill='#0F4C81' />
+        <text x='230' y='230' textAnchor='middle' dominantBaseline='middle' fill='#FFFFFF' fontSize='16' fontWeight='bold'>ToolMessage ×N（结果回灌）</text>
+        <path d='M 470 224 L 470 166' stroke='#E8590C' strokeWidth='2' fill='none' />
+        <path d='M 470 166 L 463 178 M 470 166 L 477 178' stroke='#E8590C' strokeWidth='2' fill='none' />
+        <line x1='430' y1='224' x2='470' y2='224' stroke='#E8590C' strokeWidth='2' />
+        <line x1='430' y1='166' x2='470' y2='166' stroke='#E8590C' strokeWidth='2' />
+        <text x='486' y='200' fill='#E8590C' fontSize='14' fontWeight='bold'>循环 ≤ 6 轮</text>
+        <line x1='230' y1='248' x2='230' y2='264' stroke='#7BA7D9' strokeWidth='1.5' />
+        <rect x='30' y='264' width='400' height='48' rx='8' fill='#7BA7D9' />
+        <text x='230' y='294' textAnchor='middle' dominantBaseline='middle' fill='#FFFFFF' fontSize='16' fontWeight='bold'>模型不再发起调用 → 最终 AIMessage</text>
+        <rect x='30' y='340' width='400' height='60' rx='8' fill='none' stroke='#E8590C' strokeWidth='1.5' />
+        <text x='50' y='364' fill='#E8590C' fontSize='14' fontWeight='bold'>工具异常 → 结构化错误文案回灌</text>
+        <text x='50' y='388' fill='#5E7B99' fontSize='13'>tool_call 与 ToolMessage 一一对应，消息序列永不断裂</text>
+        <line x1='430' y1='364' x2='470' y2='364' stroke='#E8590C' strokeWidth='1.5' strokeDasharray='4 3' />
+        <line x1='470' y1='364' x2='470' y2='240' stroke='#E8590C' strokeWidth='1.5' strokeDasharray='4 3' />
+      </svg>
+    </Box>
+    <Box style={{ flex: 1, flexDirection: 'column', gap: 22 }}>
+      <Box>
+        <Text style={{ fontSize: 19, fontWeight: 'bold', color: '#0F4C81' }}>自研生成器版 ReAct</Text>
+        <Text style={{ fontSize: 17, color: '#5E7B99', lineHeight: 1.6, marginTop: 4 }}>九个工具、硬上限六轮；不用框架黑盒，为的是流式进度与降级都能插手。</Text>
+      </Box>
+      <Box>
+        <Text style={{ fontSize: 19, fontWeight: 'bold', color: '#0F4C81' }}>错误也是信息</Text>
+        <Text style={{ fontSize: 17, color: '#5E7B99', lineHeight: 1.6, marginTop: 4 }}>异常以字符串回灌，模型下一轮可自行补参重试，而不是整轮失败。</Text>
+      </Box>
+      <Box>
+        <Text style={{ fontSize: 19, fontWeight: 'bold', color: '#0F4C81' }}>轮次耗尽优雅降级</Text>
+        <Text style={{ fontSize: 17, color: '#5E7B99', lineHeight: 1.6, marginTop: 4 }}>返回最后一段中间内容并标记 degraded——降级可以，但必须让用户知道。</Text>
+      </Box>
+      <Box>
+        <Text style={{ fontSize: 19, fontWeight: 'bold', color: '#0F4C81' }}>渐进式技能加载</Text>
+        <Text style={{ fontSize: 17, color: '#5E7B99', lineHeight: 1.6, marginTop: 4 }}>系统提示只放几十 token 的目录，完整指南按需经工具进上下文。</Text>
+      </Box>
+    </Box>
+  </Box>
+  <Box style={{ height: 60, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+    <Text style={{ fontSize: 12, color: '#93A9BD' }}>求职助手 Agent 平台 · 面试讲解</Text>
+    <Text style={{ fontSize: 12, color: '#93A9BD' }}>08 / 14</Text>
+  </Box>
+</Slide>

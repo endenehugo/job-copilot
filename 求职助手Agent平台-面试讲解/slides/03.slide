@@ -1,0 +1,11 @@
+<Slide style={{ width: 1280, height: 720, background: '#FAFCFE', flexDirection: 'row', overflow: 'hidden' }}>
+  <Box style={{ width: 704, height: 720, background: 'linear-gradient(135deg, #0F4C81 0%, #2E6BA8 100%)', padding: '0 72px', justifyContent: 'center' }}>
+    <Text style={{ fontSize: 96, fontWeight: 'bold', color: 'rgba(255,255,255,0.5)', fontFamily: "'Inter','Helvetica Neue',Arial,sans-serif" }}>01</Text>
+    <Text style={{ fontSize: 64, fontWeight: 'bold', color: '#FFFFFF', marginTop: 8 }}>项目概览</Text>
+    <Box style={{ width: 48, height: 6, background: '#E8590C', marginTop: 26 }} />
+    <Text style={{ fontSize: 20, color: 'rgba(255,255,255,0.85)', lineHeight: 1.7, marginTop: 24 }}>一个求职场景的垂直 Agent：从 JD 解析、简历评分到模拟面试的全链路。</Text>
+  </Box>
+  <Box style={{ flex: 1, height: 720 }}>
+    <Image src="assets/section_overview.png" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+  </Box>
+</Slide>

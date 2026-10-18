@@ -1,0 +1,17 @@
+<Slide style={{ width: 1280, height: 720, background: '#FAFCFE', overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
+  <Box style={{ position: 'absolute', top: -80, right: -60, width: 260, height: 260, borderRadius: 130, background: '#DCE9F5', opacity: 0.6 }} />
+  <Box style={{ position: 'absolute', bottom: -100, left: -40, width: 300, height: 300, borderRadius: 150, background: '#DCE9F5', opacity: 0.45 }} />
+  <Box style={{ width: 48, height: 6, background: '#E8590C', marginBottom: 36 }} />
+  <Text style={{ fontSize: 48, fontWeight: 'bold', color: '#0F4C81', textAlign: 'center', lineHeight: 1.4 }}>先建基准、接受被数据否决</Text>
+  <Text style={{ fontSize: 28, color: '#5E7B99', textAlign: 'center', marginTop: 18 }}>用工程化治理 AI 的不确定性</Text>
+  <Box style={{ flexDirection: 'row', gap: 36, marginTop: 70, alignItems: 'center' }}>
+    <Text style={{ fontSize: 17, color: '#0F4C81', fontWeight: 'bold' }}>重排 5.8×</Text>
+    <Box style={{ width: 4, height: 4, borderRadius: 2, background: '#93A9BD' }} />
+    <Text style={{ fontSize: 17, color: '#0F4C81', fontWeight: 'bold' }}>首字节 3.7s</Text>
+    <Box style={{ width: 4, height: 4, borderRadius: 2, background: '#93A9BD' }} />
+    <Text style={{ fontSize: 17, color: '#0F4C81', fontWeight: 'bold' }}>155 项离线测试</Text>
+    <Box style={{ width: 4, height: 4, borderRadius: 2, background: '#93A9BD' }} />
+    <Text style={{ fontSize: 17, color: '#0F4C81', fontWeight: 'bold' }}>九工具全链路降级</Text>
+  </Box>
+  <Text style={{ fontSize: 14, color: '#93A9BD', marginTop: 40 }}>求职助手 Agent 平台 · 2026.10</Text>
+</Slide>

@@ -1,0 +1,55 @@
+<Slide style={{ width: 1280, height: 720, background: '#FAFCFE', padding: '0 72px', overflow: 'hidden' }}>
+  <Box style={{ paddingTop: 26 }}>
+    <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#0F4C81' }}>SSE 流式与延迟治理</Text>
+    <Box style={{ width: 36, height: 4, background: '#E8590C', marginTop: 10 }} />
+  </Box>
+  <Box style={{ flexDirection: 'row', gap: 40, marginTop: 24, height: 340 }}>
+    <Box style={{ width: 600 }}>
+      <Chart
+        style={{ width: 600, height: 300 }}
+        chartType='barChart'
+        barDirection='column'
+        title='关键路径耗时对比（秒）'
+        titleColor='#1F2D3D'
+        showLegend={true}
+        showDataLabels={true}
+        legendColor='#5E7B99'
+        axisColor='#93A9BD'
+        dataLabelColor='#1F2D3D'
+        colors={['#7BA7D9', '#E8590C']}
+        background='#FFFFFF'
+        data={[
+          ['指标', '优化前', '优化后'],
+          ['重排耗时', 21.4, 3.7],
+          ['首字节 TTFF', 22.5, 3.7],
+        ]}
+      />
+      <Text style={{ fontSize: 13, color: '#93A9BD', marginTop: 8 }}>* TTFF 优化前为 15~30s 区间，图中取中值 22.5s 展示</Text>
+    </Box>
+    <Box style={{ flex: 1, flexDirection: 'column', gap: 16, justifyContent: 'center' }}>
+      <Text style={{ fontSize: 19, fontWeight: 'bold', color: '#0F4C81' }}>定位：耗时结构拆解</Text>
+      <Text style={{ fontSize: 16, color: '#5E7B99', lineHeight: 1.6 }}>延迟首因是单条消息内十余次串行 LLM 调用，不凭感觉优化。</Text>
+      <Text style={{ fontSize: 17, color: '#1F2D3D', lineHeight: 1.6 }}><span style={{ fontWeight: 'bold', color: '#E8590C' }}>1</span>  重排改 listwise 单次调用</Text>
+      <Text style={{ fontSize: 17, color: '#1F2D3D', lineHeight: 1.6 }}><span style={{ fontWeight: 'bold', color: '#E8590C' }}>2</span>  幻觉校验移出关键路径，done 后异步补发</Text>
+      <Text style={{ fontSize: 17, color: '#1F2D3D', lineHeight: 1.6 }}><span style={{ fontWeight: 'bold', color: '#E8590C' }}>3</span>  历史摘要水位线增量持久化</Text>
+    </Box>
+  </Box>
+  <Box style={{ marginTop: 20, background: '#FFFFFF', border: '0.5px solid #DCE9F5', borderRadius: 10, padding: '16px 24px' }}>
+    <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+      <Text style={{ fontSize: 15, fontWeight: 'bold', color: '#5E7B99', width: 110 }}>SSE 事件序列</Text>
+      {['meta', 'delta', 'tool_status', 'sources', 'done', 'verification'].map((e, i) => (
+        <Box key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <Box style={{ background: i === 4 ? '#0F4C81' : '#DCE9F5', borderRadius: 6, padding: '6px 14px' }}>
+            <Text style={{ fontSize: 15, color: i === 4 ? '#FFFFFF' : '#0F4C81', fontWeight: 'bold', fontFamily: "'Inter','Helvetica Neue',Arial,sans-serif" }}>{e}</Text>
+          </Box>
+          {i < 5 && <Text style={{ fontSize: 14, color: '#93A9BD' }}>→</Text>}
+        </Box>
+      ))}
+    </Box>
+    <Text style={{ fontSize: 16, color: '#0F4C81', lineHeight: 1.6, marginTop: 12 }}>done 提前：回答态立刻完整，verification 异步补发引用与风险徽标——感知等待净减约 15 秒；事件顺序写入专项单测，改坏了会红。</Text>
+  </Box>
+  <Box style={{ height: 56, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+    <Text style={{ fontSize: 12, color: '#93A9BD' }}>求职助手 Agent 平台 · 面试讲解</Text>
+    <Text style={{ fontSize: 12, color: '#93A9BD' }}>10 / 14</Text>
+  </Box>
+</Slide>

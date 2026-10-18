@@ -1,0 +1,57 @@
+<Slide style={{ width: 1280, height: 720, background: '#FAFCFE', padding: '0 72px', overflow: 'hidden' }}>
+  <Box style={{ paddingTop: 26 }}>
+    <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#0F4C81' }}>输出治理与测试体系</Text>
+    <Box style={{ width: 36, height: 4, background: '#E8590C', marginTop: 10 }} />
+  </Box>
+  <Box style={{ flexDirection: 'row', gap: 40, marginTop: 22, height: 250 }}>
+    <Box style={{ width: 600 }}>
+      <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#0F4C81' }}>幻觉后置验证 · 降级可见化</Text>
+      <Box style={{ flexDirection: 'column', gap: 10, marginTop: 14 }}>
+        <Text style={{ fontSize: 17, color: '#1F2D3D', lineHeight: 1.6 }}>· 回答拆成原子断言逐条归因，无支撑占比定低/中/高风险</Text>
+        <Text style={{ fontSize: 17, color: '#1F2D3D', lineHeight: 1.6 }}>· <span style={{ fontWeight: 'bold', color: '#E8590C' }}>编造量化数据自动升级</span>——精确假数字比模糊话术更危险</Text>
+        <Text style={{ fontSize: 17, color: '#1F2D3D', lineHeight: 1.6 }}>· 「未验证」一律报 <span style={{ fontWeight: 'bold', color: '#0F4C81' }}>unknown</span>，绝不冒充低风险</Text>
+        <Text style={{ fontSize: 17, color: '#1F2D3D', lineHeight: 1.6 }}>· 评分缺失置 None 不伪造 0 分；非法枚举回退白名单</Text>
+      </Box>
+    </Box>
+    <Box style={{ flex: 1, background: '#FFFFFF', border: '0.5px solid #DCE9F5', borderRadius: 12, padding: '18px 22px' }}>
+      <Text style={{ fontSize: 17, fontWeight: 'bold', color: '#0F4C81' }}>五级 JSON 解析管道</Text>
+      <Box style={{ flexDirection: 'column', gap: 8, marginTop: 12 }}>
+        {['直接 loads', 'markdown 代码块提取', '括号计数状态机', '原文修复 repair_json', '正则兜底'].map((s, i) => (
+          <Box key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <Box style={{ width: 26, height: 26, borderRadius: 13, background: '#DCE9F5', alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ fontSize: 13, fontWeight: 'bold', color: '#0F4C81', fontFamily: "'Inter','Helvetica Neue',Arial,sans-serif" }}>{i + 1}</Text>
+            </Box>
+            <Text style={{ fontSize: 16, color: '#1F2D3D' }}>{s}</Text>
+          </Box>
+        ))}
+      </Box>
+    </Box>
+  </Box>
+  <Box style={{ marginTop: 16, height: 164, background: '#FFFFFF', border: '0.5px solid #DCE9F5', borderRadius: 12, padding: '14px 28px' }}>
+    <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 28 }}>
+      <Text style={{ fontSize: 44, fontWeight: 'bold', color: '#E8590C', fontFamily: "'Inter','Helvetica Neue',Arial,sans-serif" }}>155 项</Text>
+      <Text style={{ fontSize: 18, color: '#0F4C81', fontWeight: 'bold' }}>pytest 全离线零网络</Text>
+    </Box>
+    <Box style={{ flexDirection: 'row', gap: 32, marginTop: 10 }}>
+      <Box style={{ flex: 1 }}>
+        <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#1F2D3D' }}>mock SDK 驱动降级路径</Text>
+        <Text style={{ fontSize: 15, color: '#5E7B99', lineHeight: 1.55, marginTop: 4 }}>断言额度错误后沿链切换且粘性保持、流式部分产出后原样抛错。</Text>
+      </Box>
+      <Box style={{ flex: 1 }}>
+        <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#1F2D3D' }}>确定性假 embedding</Text>
+        <Text style={{ fontSize: 15, color: '#5E7B99', lineHeight: 1.55, marginTop: 4 }}>字符取模生成固定向量，FAISS 检索可离线断言排序。</Text>
+      </Box>
+      <Box style={{ flex: 1 }}>
+        <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#1F2D3D' }}>行为契约单测</Text>
+        <Text style={{ fontSize: 15, color: '#5E7B99', lineHeight: 1.55, marginTop: 4 }}>SSE 事件顺序、降级信封字段、「零分合法保留」均有专项回归。</Text>
+      </Box>
+    </Box>
+  </Box>
+  <Box style={{ background: '#DCE9F5', borderRadius: 8, padding: '12px 20px', marginTop: 16, borderLeft: '4px solid #E8590C' }}>
+    <Text style={{ fontSize: 18, color: '#0F4C81' }}>测试的主要价值不是「功能能跑」，而是「故障时行为正确」。</Text>
+  </Box>
+  <Box style={{ height: 46, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+    <Text style={{ fontSize: 12, color: '#93A9BD' }}>求职助手 Agent 平台 · 面试讲解</Text>
+    <Text style={{ fontSize: 12, color: '#93A9BD' }}>13 / 14</Text>
+  </Box>
+</Slide>

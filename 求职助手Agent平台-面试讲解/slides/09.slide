@@ -1,0 +1,64 @@
+<Slide style={{ width: 1280, height: 720, background: '#FAFCFE', padding: '0 72px', overflow: 'hidden' }}>
+  <Box style={{ paddingTop: 26 }}>
+    <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#0F4C81' }}>混合检索与 listwise 重排</Text>
+    <Box style={{ width: 36, height: 4, background: '#E8590C', marginTop: 10 }} />
+  </Box>
+  <Box style={{ flexDirection: 'row', gap: 40, marginTop: 24, height: 450 }}>
+    <Box style={{ width: 620, background: '#FFFFFF', border: '0.5px solid #DCE9F5', borderRadius: 12, padding: 14, justifyContent: 'center' }}>
+      <svg width={592} height={422} viewBox='0 0 592 422'>
+        <rect x='16' y='24' width='150' height='56' rx='8' fill='#0F4C81' />
+        <text x='91' y='46' textAnchor='middle' fill='#FFFFFF' fontSize='14' fontWeight='bold'>FAISS 向量路</text>
+        <text x='91' y='66' textAnchor='middle' fill='rgba(255,255,255,0.8)' fontSize='12'>吃语义</text>
+        <rect x='16' y='110' width='150' height='56' rx='8' fill='#7BA7D9' />
+        <text x='91' y='132' textAnchor='middle' fill='#FFFFFF' fontSize='14' fontWeight='bold'>BM25 关键词路</text>
+        <text x='91' y='152' textAnchor='middle' fill='rgba(255,255,255,0.85)' fontSize='12'>吃词面 · 各取 2×limit</text>
+        <line x1='166' y1='52' x2='206' y2='86' stroke='#7BA7D9' strokeWidth='1.5' />
+        <line x1='166' y1='138' x2='206' y2='104' stroke='#7BA7D9' strokeWidth='1.5' />
+        <rect x='206' y='67' width='110' height='56' rx='8' fill='#DCE9F5' />
+        <text x='261' y='89' textAnchor='middle' fill='#0F4C81' fontSize='14' fontWeight='bold'>去重合并</text>
+        <text x='261' y='109' textAnchor='middle' fill='#5E7B99' fontSize='12'>先扩召回</text>
+        <line x1='316' y1='95' x2='350' y2='95' stroke='#7BA7D9' strokeWidth='1.5' />
+        <rect x='350' y='67' width='118' height='56' rx='8' fill='#0F4C81' />
+        <text x='409' y='89' textAnchor='middle' fill='#FFFFFF' fontSize='14' fontWeight='bold'>listwise 精排</text>
+        <text x='409' y='109' textAnchor='middle' fill='rgba(255,255,255,0.8)' fontSize='12'>单次调用出序号</text>
+        <line x1='468' y1='95' x2='496' y2='95' stroke='#7BA7D9' strokeWidth='1.5' />
+        <rect x='496' y='67' width='82' height='56' rx='8' fill='#DCE9F5' />
+        <text x='537' y='89' textAnchor='middle' fill='#0F4C81' fontSize='14' fontWeight='bold'>Top-4</text>
+        <text x='537' y='109' textAnchor='middle' fill='#5E7B99' fontSize='12'>入上下文</text>
+        <text x='296' y='158' textAnchor='middle' fill='#93A9BD' fontSize='13'>逐字段字符上限，防撑爆 prompt；漏编号按原序补齐</text>
+        <line x1='20' y1='188' x2='572' y2='188' stroke='#DCE9F5' strokeWidth='1' />
+        <text x='296' y='216' textAnchor='middle' fill='#5E7B99' fontSize='14' fontWeight='bold'>检索三级降级 · 保证可用</text>
+        <rect x='30' y='238' width='160' height='52' rx='8' fill='#0F4C81' />
+        <text x='110' y='258' textAnchor='middle' fill='#FFFFFF' fontSize='14' fontWeight='bold'>会话私有索引</text>
+        <text x='110' y='278' textAnchor='middle' fill='rgba(255,255,255,0.8)' fontSize='12'>上传文档即时建</text>
+        <line x1='190' y1='264' x2='216' y2='264' stroke='#7BA7D9' strokeWidth='1.5' />
+        <rect x='216' y='238' width='160' height='52' rx='8' fill='#7BA7D9' />
+        <text x='296' y='258' textAnchor='middle' fill='#FFFFFF' fontSize='14' fontWeight='bold'>公共全局索引</text>
+        <text x='296' y='278' textAnchor='middle' fill='rgba(255,255,255,0.85)' fontSize='12'>阈值+兜底两级</text>
+        <line x1='376' y1='264' x2='402' y2='264' stroke='#7BA7D9' strokeWidth='1.5' />
+        <rect x='402' y='238' width='160' height='52' rx='8' fill='#DCE9F5' />
+        <text x='482' y='258' textAnchor='middle' fill='#0F4C81' fontSize='14' fontWeight='bold'>内置知识库</text>
+        <text x='482' y='278' textAnchor='middle' fill='#5E7B99' fontSize='12'>无条件常驻补充</text>
+        <text x='296' y='330' textAnchor='middle' fill='#93A9BD' fontSize='13'>索引重建：临时目录写入 → 成功才 rename 原子替换；增量更新失败自动退回全量</text>
+        <text x='296' y='386' textAnchor='middle' fill='#93A9BD' fontSize='13'>chunk 700 / overlap 120 · 递归分隔符保语义边界 · chunk 前缀带文件名命中文件名类问题</text>
+      </svg>
+    </Box>
+    <Box style={{ flex: 1, flexDirection: 'column', gap: 14 }}>
+      <Box>
+        <Text style={{ fontSize: 54, fontWeight: 'bold', color: '#E8590C', fontFamily: "'Inter','Helvetica Neue',Arial,sans-serif" }}>5.8×</Text>
+        <Text style={{ fontSize: 17, color: '#5E7B99', lineHeight: 1.55, marginTop: 4 }}>重排 21.4s → 3.7s，Top-4 与逐篇打分重合率 0.71——N 次调用变一次，强制输出序号还产生严格序，避免分数退化。</Text>
+      </Box>
+      <Box style={{ background: '#FFFFFF', border: '0.5px solid #DCE9F5', borderRadius: 8, padding: '12px 16px' }}>
+        <Text style={{ fontSize: 16, fontWeight: 'bold', color: '#0F4C81' }}>RRF 被自建基准否决</Text>
+        <Text style={{ fontSize: 15, color: '#5E7B99', lineHeight: 1.55, marginTop: 4 }}>与 LLM 排序 Top-4 重合率仅 0.14~0.33：BM25 按字切分，关键词路排名本身是坏的。RRF 保留为最后兜底，metadata 标注 score_source，降级不悄悄发生。</Text>
+      </Box>
+      <Box style={{ background: '#DCE9F5', borderRadius: 8, padding: '12px 16px', borderLeft: '4px solid #E8590C' }}>
+        <Text style={{ fontSize: 17, color: '#0F4C81', lineHeight: 1.55 }}>性能优化先建基准，方案要能被数据否决——这比优化成功更能证明判断力。</Text>
+      </Box>
+    </Box>
+  </Box>
+  <Box style={{ height: 60, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+    <Text style={{ fontSize: 12, color: '#93A9BD' }}>求职助手 Agent 平台 · 面试讲解</Text>
+    <Text style={{ fontSize: 12, color: '#93A9BD' }}>09 / 14</Text>
+  </Box>
+</Slide>

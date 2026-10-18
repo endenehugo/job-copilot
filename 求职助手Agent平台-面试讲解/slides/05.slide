@@ -1,0 +1,55 @@
+<Slide style={{ width: 1280, height: 720, background: '#FAFCFE', padding: '0 72px', overflow: 'hidden' }}>
+  <Box style={{ paddingTop: 26 }}>
+    <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#0F4C81' }}>系统架构与技术栈</Text>
+    <Box style={{ width: 36, height: 4, background: '#E8590C', marginTop: 10 }} />
+  </Box>
+  <Box style={{ flexDirection: 'row', gap: 40, marginTop: 26, height: 448 }}>
+    <Box style={{ width: 620, background: '#FFFFFF', border: '0.5px solid #DCE9F5', borderRadius: 12, padding: 16, justifyContent: 'center' }}>
+      <svg width={588} height={416} viewBox='0 0 588 416'>
+        <rect x='20' y='10' width='360' height='52' rx='8' fill='#DCE9F5' />
+        <text x='200' y='42' textAnchor='middle' dominantBaseline='middle' fill='#0F4C81' fontSize='17' fontWeight='bold'>前端 Vue3 · Pinia · Element Plus</text>
+        <line x1='200' y1='62' x2='200' y2='92' stroke='#7BA7D9' strokeWidth='1.5' />
+        <text x='214' y='80' fill='#93A9BD' fontSize='12'>Nginx 反代 /api · SSE 不缓冲</text>
+        <rect x='20' y='92' width='360' height='52' rx='8' fill='#DCE9F5' />
+        <text x='200' y='124' textAnchor='middle' dominantBaseline='middle' fill='#0F4C81' fontSize='17' fontWeight='bold'>API 层 FastAPI Router · 统一信封</text>
+        <line x1='200' y1='144' x2='200' y2='174' stroke='#7BA7D9' strokeWidth='1.5' />
+        <rect x='20' y='174' width='360' height='118' rx='8' fill='#0F4C81' />
+        <text x='200' y='198' textAnchor='middle' fill='#FFFFFF' fontSize='16' fontWeight='bold'>服务层（核心）</text>
+        <rect x='34' y='216' width='158' height='34' rx='6' fill='rgba(255,255,255,0.16)' />
+        <text x='113' y='239' textAnchor='middle' dominantBaseline='middle' fill='#FFFFFF' fontSize='14'>Agent 工具循环</text>
+        <rect x='208' y='216' width='158' height='34' rx='6' fill='rgba(255,255,255,0.16)' />
+        <text x='287' y='239' textAnchor='middle' dominantBaseline='middle' fill='#FFFFFF' fontSize='14'>检索与重排</text>
+        <rect x='34' y='256' width='158' height='28' rx='6' fill='rgba(255,255,255,0.16)' />
+        <text x='113' y='276' textAnchor='middle' dominantBaseline='middle' fill='#FFFFFF' fontSize='14'>上下文压缩</text>
+        <rect x='208' y='256' width='158' height='28' rx='6' fill='rgba(255,255,255,0.16)' />
+        <text x='287' y='276' textAnchor='middle' dominantBaseline='middle' fill='#FFFFFF' fontSize='14'>幻觉校验</text>
+        <line x1='200' y1='292' x2='200' y2='322' stroke='#7BA7D9' strokeWidth='1.5' />
+        <rect x='20' y='322' width='360' height='52' rx='8' fill='#DCE9F5' />
+        <text x='200' y='354' textAnchor='middle' dominantBaseline='middle' fill='#0F4C81' fontSize='17' fontWeight='bold'>持久层 SQLAlchemy 2.0 · MySQL</text>
+        <line x1='380' y1='233' x2='420' y2='233' stroke='#7BA7D9' strokeWidth='1.5' strokeDasharray='4 3' />
+        <rect x='420' y='120' width='158' height='226' rx='8' fill='none' stroke='#7BA7D9' strokeWidth='1.2' strokeDasharray='5 4' />
+        <text x='499' y='148' textAnchor='middle' fill='#5E7B99' fontSize='14' fontWeight='bold'>外部依赖</text>
+        <text x='499' y='190' textAnchor='middle' fill='#1F2D3D' fontSize='14'>通义 LLM</text>
+        <text x='499' y='222' textAnchor='middle' fill='#1F2D3D' fontSize='14'>text-embedding-v3</text>
+        <text x='499' y='254' textAnchor='middle' fill='#1F2D3D' fontSize='14'>FAISS 向量索引</text>
+        <text x='499' y='286' textAnchor='middle' fill='#1F2D3D' fontSize='14'>BM25 语料</text>
+        <text x='294' y='400' textAnchor='middle' fill='#93A9BD' fontSize='13'>分层职责：API 薄、服务层厚、持久层只做事务</text>
+      </svg>
+    </Box>
+    <Box style={{ flex: 1, flexDirection: 'column', gap: 18 }}>
+      <Text style={{ fontSize: 20, color: '#1F2D3D', lineHeight: 1.65 }}>后端 FastAPI + SQLAlchemy 2.0 + MySQL + LangChain，检索用 <span style={{ fontWeight: 'bold', color: '#0F4C81' }}>FAISS 向量 + BM25 混合</span>；前端 Vue3 + Vite + Pinia。</Text>
+      <Box style={{ flexDirection: 'column', gap: 10 }}>
+        <Text style={{ fontSize: 17, color: '#5E7B99', lineHeight: 1.6 }}>· 配置、响应信封、异常处理收口在 core 层</Text>
+        <Text style={{ fontSize: 17, color: '#5E7B99', lineHeight: 1.6 }}>· 检索、评分、面试、压缩、校验均为独立服务</Text>
+        <Text style={{ fontSize: 17, color: '#5E7B99', lineHeight: 1.6 }}>· 运行时产物（索引/文档）与代码严格分离</Text>
+      </Box>
+      <Box style={{ background: '#DCE9F5', borderRadius: 8, padding: '14px 18px', borderLeft: '4px solid #E8590C' }}>
+        <Text style={{ fontSize: 18, color: '#0F4C81', lineHeight: 1.6 }}>架构为「可插拔、可降级、可观测」服务：检索与治理组件都能独立替换。</Text>
+      </Box>
+    </Box>
+  </Box>
+  <Box style={{ height: 60, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+    <Text style={{ fontSize: 12, color: '#93A9BD' }}>求职助手 Agent 平台 · 面试讲解</Text>
+    <Text style={{ fontSize: 12, color: '#93A9BD' }}>05 / 14</Text>
+  </Box>
+</Slide>

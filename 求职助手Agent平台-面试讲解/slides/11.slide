@@ -1,0 +1,46 @@
+<Slide style={{ width: 1280, height: 720, background: '#FAFCFE', padding: '0 72px', overflow: 'hidden' }}>
+  <Box style={{ paddingTop: 26 }}>
+    <Text style={{ fontSize: 34, fontWeight: 'bold', color: '#0F4C81' }}>LLM 工厂与降级链</Text>
+    <Box style={{ width: 36, height: 4, background: '#E8590C', marginTop: 10 }} />
+  </Box>
+  <Box style={{ flexDirection: 'row', gap: 36, marginTop: 24, height: 450 }}>
+    <Box style={{ width: 340, background: 'linear-gradient(160deg, #0F4C81 0%, #2E6BA8 100%)', borderRadius: 12, padding: '30px 28px', justifyContent: 'space-between' }}>
+      <Box>
+        <Text style={{ fontSize: 15, color: 'rgba(255,255,255,0.75)' }}>收口前 · 最坏等待</Text>
+        <Text style={{ fontSize: 58, fontWeight: 'bold', color: '#FFFFFF', marginTop: 6, fontFamily: "'Inter','Helvetica Neue',Arial,sans-serif" }}>50 min</Text>
+        <Text style={{ fontSize: 16, color: 'rgba(255,255,255,0.85)', lineHeight: 1.65, marginTop: 12 }}>13 处散装客户端构造 × SDK 默认重试 10 次 × 底层超时 300s，相乘的最坏结果。</Text>
+      </Box>
+      <Box>
+        <Text style={{ fontSize: 15, color: 'rgba(255,255,255,0.75)' }}>收口后</Text>
+        <Text style={{ fontSize: 20, fontWeight: 'bold', color: '#FFFFFF', lineHeight: 1.7, marginTop: 6 }}>统一工厂 · lru_cache 单例{'\n'}超时分层 60s / 180s{'\n'}重试压至 2 次</Text>
+        <Text style={{ fontSize: 15, color: 'rgba(255,255,255,0.7)', lineHeight: 1.6, marginTop: 10 }}>新代码想漏配都难。</Text>
+      </Box>
+    </Box>
+    <Box style={{ flex: 1, background: '#FFFFFF', border: '0.5px solid #DCE9F5', borderRadius: 12, padding: 16, justifyContent: 'center' }}>
+      <svg width={700} height={385} viewBox='0 0 760 418'>
+        <rect x='20' y='180' width='150' height='58' rx='8' fill='#0F4C81' />
+        <text x='95' y='203' textAnchor='middle' fill='#FFFFFF' fontSize='15' fontWeight='bold'>LLM 调用异常</text>
+        <text x='95' y='223' textAnchor='middle' fill='rgba(255,255,255,0.8)' fontSize='12'>错误文本匹配标记</text>
+        <line x1='170' y1='209' x2='210' y2='209' stroke='#7BA7D9' strokeWidth='1.5' />
+        <rect x='210' y='172' width='170' height='74' rx='10' fill='#DCE9F5' />
+        <text x='295' y='202' textAnchor='middle' fill='#0F4C81' fontSize='15' fontWeight='bold'>额度 / 权限类？</text>
+        <text x='295' y='226' textAnchor='middle' fill='#5E7B99' fontSize='12'>限流不降级 → 重试兜底</text>
+        <line x1='380' y1='192' x2='430' y2='112' stroke='#E8590C' strokeWidth='2' />
+        <line x1='380' y1='226' x2='430' y2='306' stroke='#7BA7D9' strokeWidth='1.5' />
+        <rect x='430' y='82' width='300' height='60' rx='8' fill='#0F4C81' />
+        <text x='580' y='106' textAnchor='middle' fill='#FFFFFF' fontSize='15' fontWeight='bold'>沿降级链切换模型（粘性）</text>
+        <text x='580' y='128' textAnchor='middle' fill='rgba(255,255,255,0.8)' fontSize='12'>额度不会自愈，粘住是预期行为</text>
+        <rect x='430' y='276' width='300' height='60' rx='8' fill='#DCE9F5' />
+        <text x='580' y='300' textAnchor='middle' fill='#0F4C81' fontSize='15' fontWeight='bold'>交给重试兜底</text>
+        <text x='580' y='322' textAnchor='middle' fill='#5E7B99' fontSize='12'>防瞬时抖动把服务粘死在小模型</text>
+        <rect x='20' y='366' width='710' height='44' rx='8' fill='none' stroke='#E8590C' strokeWidth='1.5' />
+        <text x='375' y='393' textAnchor='middle' dominantBaseline='middle' fill='#E8590C' fontSize='14' fontWeight='bold'>流式边界：先缓冲首分片——首分片前可安全降级；已产出内容则原样抛错，无法回滚</text>
+        <text x='580' y='166' textAnchor='middle' fill='#93A9BD' fontSize='12'>原生 ChatTongyi 与 OpenAI 兼容双端点按模型自动分流</text>
+      </svg>
+    </Box>
+  </Box>
+  <Box style={{ height: 60, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+    <Text style={{ fontSize: 12, color: '#93A9BD' }}>求职助手 Agent 平台 · 面试讲解</Text>
+    <Text style={{ fontSize: 12, color: '#93A9BD' }}>11 / 14</Text>
+  </Box>
+</Slide>

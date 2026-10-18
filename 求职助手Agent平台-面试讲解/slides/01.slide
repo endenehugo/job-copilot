@@ -1,0 +1,9 @@
+<Slide style={{ width: 1280, height: 720, background: '#FAFCFE', overflow: 'hidden' }}>
+  <Image src="assets/hero_cover.png" style={{ position: 'absolute', top: 0, left: 0, width: 1280, height: 720, objectFit: 'cover' }} />
+  <Box style={{ position: 'absolute', left: 72, bottom: 90, width: 780, background: 'rgba(255,255,255,0.88)', borderRadius: 16, padding: '34px 44px' }}>
+    <Box style={{ width: 48, height: 6, background: '#E8590C', marginBottom: 18 }} />
+    <Text style={{ fontSize: 68, fontWeight: 'bold', color: '#0F4C81', lineHeight: 1.15, fontFamily: "'Source Han Sans SC','PingFang SC','Microsoft YaHei',sans-serif" }}>求职助手 Agent 平台</Text>
+    <Text style={{ fontSize: 24, color: '#5E7B99', marginTop: 14 }}>项目讲解 · 技术面试</Text>
+    <Text style={{ fontSize: 16, color: '#93A9BD', marginTop: 8 }}>AI 应用工程师方向 · 2026.10</Text>
+  </Box>
+</Slide>

@@ -1,0 +1,38 @@
+<Slide style={{ width: 1280, height: 720, background: '#FAFCFE', padding: '0 72px', overflow: 'hidden' }}>
+  <Box style={{ flexDirection: 'row', height: 540, marginTop: 60, gap: 70 }}>
+    <Box style={{ width: 300, paddingTop: 40 }}>
+      <Text style={{ fontSize: 52, fontWeight: 'bold', color: '#0F4C81' }}>目录</Text>
+      <Box style={{ width: 40, height: 5, background: '#E8590C', marginTop: 16 }} />
+      <Text style={{ fontSize: 18, color: '#5E7B99', lineHeight: 1.7, marginTop: 24 }}>三个部分：先看项目全貌，再看有实测数据支撑的核心亮点，最后回到工程质量与工程判断。</Text>
+    </Box>
+    <Box style={{ flex: 1, flexDirection: 'column', justifyContent: 'center', gap: 34 }}>
+      <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 28 }}>
+        <Text style={{ fontSize: 46, fontWeight: 'bold', color: '#7BA7D9', fontFamily: "'Inter','Helvetica Neue',Arial,sans-serif" }}>01</Text>
+        <Box style={{ flex: 1 }}>
+          <Text style={{ fontSize: 26, fontWeight: 'bold', color: '#1F2D3D' }}>项目概览</Text>
+          <Text style={{ fontSize: 18, color: '#5E7B99', marginTop: 6 }}>定位、功能全景与四层架构——说明这个项目的复杂度在哪里。</Text>
+        </Box>
+      </Box>
+      <Box style={{ height: 1, background: '#DCE9F5' }} />
+      <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 28 }}>
+        <Text style={{ fontSize: 46, fontWeight: 'bold', color: '#7BA7D9', fontFamily: "'Inter','Helvetica Neue',Arial,sans-serif" }}>02</Text>
+        <Box style={{ flex: 1 }}>
+          <Text style={{ fontSize: 26, fontWeight: 'bold', color: '#1F2D3D' }}>核心亮点与实测数据</Text>
+          <Text style={{ fontSize: 18, color: '#5E7B99', marginTop: 6 }}>六大亮点逐一展开，每组结论都有自建基准支撑，包括一次被数据否决的方案。</Text>
+        </Box>
+      </Box>
+      <Box style={{ height: 1, background: '#DCE9F5' }} />
+      <Box style={{ flexDirection: 'row', alignItems: 'center', gap: 28 }}>
+        <Text style={{ fontSize: 46, fontWeight: 'bold', color: '#7BA7D9', fontFamily: "'Inter','Helvetica Neue',Arial,sans-serif" }}>03</Text>
+        <Box style={{ flex: 1 }}>
+          <Text style={{ fontSize: 26, fontWeight: 'bold', color: '#1F2D3D' }}>工程质量与总结</Text>
+          <Text style={{ fontSize: 18, color: '#5E7B99', marginTop: 6 }}>输出治理、155 项离线测试，以及贯穿全项目的工程方法论。</Text>
+        </Box>
+      </Box>
+    </Box>
+  </Box>
+  <Box style={{ height: 60, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+    <Text style={{ fontSize: 12, color: '#93A9BD' }}>求职助手 Agent 平台 · 面试讲解</Text>
+    <Text style={{ fontSize: 12, color: '#93A9BD' }}>02 / 14</Text>
+  </Box>
+</Slide>
