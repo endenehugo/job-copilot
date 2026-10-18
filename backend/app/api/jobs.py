@@ -7,9 +7,13 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.core.deps import (
     get_conversation_store_service,
@@ -24,6 +28,7 @@ from app.repositories import DatabaseManager, JobAnalysisRepository
 from app.schemas.job import (
     JobAnalysisDeleteRequest,
     JobAnalyzeRequest,
+    JobAnalyzeStreamRequest,
     ScreenshotAnalyzeRequest,
 )
 from app.services.job_analysis_store_service import (
@@ -33,6 +38,7 @@ from app.services.job_analysis_store_service import (
 )
 
 router = APIRouter(prefix="/api/v1")
+logger = logging.getLogger(__name__)
 
 
 def _read_latest_resume_text(conversation_id: str) -> str:
@@ -84,6 +90,112 @@ def analyze_job(payload: JobAnalyzeRequest, role: str = Depends(get_current_role
     response_data["analysis_id"] = analysis_id
     warnings = scoring_result.get("warnings") or []
     return ok(response_data, message="分析完成", degraded=bool(warnings), warnings=warnings)
+
+
+@router.post("/job/analyze/stream")
+async def analyze_job_stream(payload: JobAnalyzeStreamRequest, role: str = Depends(get_current_role)):
+    """JD 分析（SSE）：按阶段推送进度，最后一条 done 携带与非流式端点一致的完整结果。
+
+    为什么需要它：一次分析是两次模型调用（JD 解析 + 匹配评分），实测 8 秒起步、
+    模型排队时更久，前端原来只有一个"分析中"的按钮状态——用户分不清是在跑还是卡死。
+    这里把阶段推给前端，进度条才有真实依据，而不是按时间瞎涨。
+
+    事件：stage（阶段+百分比）*  ->  done（完整结果）| error（message）
+    """
+    conversation_id = payload.conversation_id.strip()
+    jd_text = payload.jd_text.strip()
+    image_url = payload.image_url.strip()
+
+    if not conversation_id:
+        return fail("conversation_id 参数不能为空", code=400)
+    if not jd_text and not image_url:
+        return fail("jd_text 或 image_url 至少提供一个", code=400)
+
+    # 前置校验放在流开始之前：这样"没简历/图片不存在"还能按普通 400 信封返回，
+    # 前端不必从 SSE 里解析错误
+    store_service = get_conversation_store_service()
+    store_service.ensure_conversation_exists(conversation_id)
+    resume_text = _read_latest_resume_text(conversation_id)
+    if not resume_text:
+        documents = store_service.get_conversation_documents(conversation_id)
+        if not documents:
+            return fail("当前会话未上传简历，请先上传简历", code=400)
+        return fail("无法读取简历解析文本", code=500)
+
+    image_path = ""
+    if image_url:
+        from app.services.conversation_chat_service import ConversationChatService
+        from app.utils import ResourceUtils
+
+        try:
+            conv_id, filename = ConversationChatService._parse_image_url(image_url)
+        except ValueError as exc:
+            return fail(f"图片地址非法: {exc}", code=400)
+        image_path = os.path.join(
+            ResourceUtils.get_resource_path(os.path.join("uploads", "images", conv_id)), filename
+        )
+        if not os.path.isfile(image_path):
+            return fail("图片文件不存在", code=400)
+
+    def sse(event: str, data) -> str:
+        return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    async def generate():
+        # 模型作用域必须在生成器内部开：端点在返回 StreamingResponse 后就退出了，
+        # 在这里 with 一下等于没生效。run_in_threadpool 会拷贝当前 context，
+        # 所以每段的模型调用都能读到本次选型。
+        try:
+            with request_model_scope(payload.model, role):
+                text = jd_text
+                if image_path:
+                    yield sse("stage", {"stage": "vision", "label": "识别截图中的 JD", "percent": 12})
+                    text = await run_in_threadpool(
+                        get_image_analysis_service().extract_jd_from_screenshot, image_path
+                    )
+                    text = (text or "").strip()
+                    if len(text) < 20:
+                        yield sse("error", {"message": "无法从截图识别出有效的 JD 文本，请确认图片清晰度"})
+                        return
+
+                yield sse(
+                    "stage",
+                    {"stage": "jd_parse", "label": "解析 JD 结构", "percent": 35 if image_path else 18},
+                )
+                jd_analysis = await run_in_threadpool(get_job_description_service().analyze, text)
+
+                yield sse("stage", {"stage": "scoring", "label": "匹配简历并评分", "percent": 68})
+                scoring_result = await run_in_threadpool(
+                    get_resume_scoring_service().score, resume_text, text, jd_analysis
+                )
+
+                yield sse("stage", {"stage": "save", "label": "保存分析结果", "percent": 93})
+                analysis_id = await run_in_threadpool(
+                    save_analysis,
+                    conversation_id=conversation_id,
+                    jd_text=text,
+                    jd_analysis=jd_analysis,
+                    scoring_result=scoring_result,
+                )
+                data = build_analysis_response(jd_analysis, scoring_result)
+                data["analysis_id"] = analysis_id
+                # 截图链路的 JD 是识别出来的，带回去用户才知道分析的是哪段文本
+                if image_path:
+                    data["jd_text"] = text
+                warnings = scoring_result.get("warnings") or []
+                if warnings:
+                    data["warnings"] = warnings
+                yield sse("done", data)
+        except ValueError as exc:
+            yield sse("error", {"message": str(exc)})
+        except Exception as exc:
+            logger.exception("JD 分析流式异常: %s", exc)
+            yield sse("error", {"message": f"分析失败: {exc}"})
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/job/analysis/latest")

@@ -30,3 +30,12 @@ class ScreenshotAnalyzeRequest(BaseModel):
     conversation_id: str = ""
     image_url: str = ""
     model: str = ""
+
+
+class JobAnalyzeStreamRequest(BaseModel):
+    """流式 JD 分析：文本与截图二选一（都有时按截图处理）。"""
+
+    conversation_id: str = ""
+    jd_text: str = ""
+    image_url: str = ""
+    model: str = ""

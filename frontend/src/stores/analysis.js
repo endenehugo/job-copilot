@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
+import { ElMessage } from 'element-plus'
 import { jobApi, resumeApi, notifyError } from '../api'
+import { postSse } from '../utils/sse'
 import { useConversationStore } from './conversation'
 import { useModelStore } from './model'
 import { useRewriteStore } from './rewrite'
@@ -13,6 +15,8 @@ export const useAnalysisStore = defineStore('analysis', {
     // cid -> JD 草稿：切会话再切回来不丢已粘贴的 JD
     jdDrafts: {},
     analyzing: false,
+    // 流式分析进度：{stage, label, percent, startedAt}；null = 没在跑
+    progress: null,
     analysis: null, // {jd_analysis, scoring, analysis_id?} 或 detail 的扁平结构
     // 会话树子节点数据：conversation_id -> 分析摘要列表（懒加载）
     listByCid: {},
@@ -94,28 +98,52 @@ export const useAnalysisStore = defineStore('analysis', {
       const conv = useConversationStore()
       const cid = conv.currentId
       if (!this.jdText.trim()) throw new Error('请输入 JD 文本')
-      this.analyzing = true
-      try {
-        const res = await jobApi.analyze(useModelStore().payloadWithModel({ conversation_id: cid, jd_text: this.jdText }))
-        this.analysis = res.data
-        // 新分析进主区视图，并刷新树与徽标
-        conv.selectNode('analysis', cid, res.data.analysis_id)
-        await Promise.all([this.loadList(cid, true), conv.loadList().catch(() => {})])
-      } finally {
-        this.analyzing = false
-      }
+      return this._runStream(
+        cid,
+        { conversation_id: cid, jd_text: this.jdText },
+        { stage: 'jd_parse', label: '准备分析', percent: 6 }
+      )
     },
     async analyzeScreenshot(imageUrl) {
       const conv = useConversationStore()
       const cid = conv.currentId
+      return this._runStream(
+        cid,
+        { conversation_id: cid, image_url: imageUrl },
+        { stage: 'vision', label: '识别截图中的 JD', percent: 8 }
+      )
+    },
+    // 流式分析：按后端推来的阶段事件更新 progress，done 里才是结果。
+    // 进度条不需要前端估算时间——百分比全部来自真实的阶段边界。
+    async _runStream(cid, payload, initialStage) {
       this.analyzing = true
+      this.progress = { ...initialStage, startedAt: Date.now() }
+      let result = null
       try {
-        const res = await jobApi.analyzeScreenshot(useModelStore().payloadWithModel({ conversation_id: cid, image_url: imageUrl }))
-        this.analysis = res.data
-        conv.selectNode('analysis', cid, res.data.analysis_id)
-        await Promise.all([this.loadList(cid, true), conv.loadList().catch(() => {})])
+        await postSse(
+          '/job/analyze/stream',
+          useModelStore().payloadWithModel(payload),
+          (event, data) => {
+            if (event === 'stage') {
+              // 保留 startedAt，阶段事件只覆盖阶段名与百分比
+              this.progress = { ...this.progress, ...data }
+            } else if (event === 'done') {
+              result = data
+            }
+          }
+        )
+        if (!result?.analysis_id) throw new Error('分析结果不完整，请重试')
+        this.analysis = result
+        // 新分析进主区视图，并刷新树与徽标
+        useConversationStore().selectNode('analysis', cid, result.analysis_id)
+        await Promise.all([this.loadList(cid, true), useConversationStore().loadList().catch(() => {})])
+        if (result.warnings?.length) {
+          // 流式链路绕过了 axios 拦截器，降级提示要自己弹
+          ElMessage({ type: 'warning', message: result.warnings.join('；'), duration: 6000 })
+        }
       } finally {
         this.analyzing = false
+        this.progress = null
       }
     },
 

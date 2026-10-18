@@ -1,23 +1,9 @@
 import { reactive } from 'vue'
 import { defineStore } from 'pinia'
 import { conversationApi, documentApi } from '../api'
+import { parseSse } from '../utils/sse'
 import { useConversationStore } from './conversation'
 import { useModelStore } from './model'
-
-function parseSse(raw) {
-  let event = 'message'
-  let data = ''
-  for (const line of raw.split('\n')) {
-    if (line.startsWith('event:')) event = line.slice(6).trim()
-    else if (line.startsWith('data:')) data += line.slice(5).trim()
-  }
-  if (!data) return null
-  try {
-    return { event, data: JSON.parse(data) }
-  } catch {
-    return null
-  }
-}
 
 export const useChatStore = defineStore('chat', {
   state: () => ({
