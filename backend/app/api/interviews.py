@@ -12,13 +12,15 @@ import json
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
 from app.core.deps import (
     get_conversation_store_service,
     get_interview_simulation_service,
 )
+from app.core.model_scope import request_model_scope
 from app.core.response import fail, ok
+from app.core.security import get_current_role
 from app.repositories import (
     DatabaseManager,
     InterviewMessage,
@@ -55,7 +57,7 @@ def _read_latest_resume_text(store_service, conversation_id: str) -> str:
 
 
 @router.post("/interview/start")
-def start_interview(payload: InterviewStartRequest) -> dict:
+def start_interview(payload: InterviewStartRequest, role: str = Depends(get_current_role)) -> dict:
     conversation_id = payload.conversation_id.strip()
     direction = payload.direction.strip() or "general"
     jd_text = payload.jd_text.strip()
@@ -86,9 +88,19 @@ def start_interview(payload: InterviewStartRequest) -> dict:
             DatabaseManager.remove_session()
 
     if not jd_text:
-        return fail("请先分析 JD 或提供 JD 文本", code=400)
+        # 报错要能直接照着做：说清楚 JD 从哪来（上传的文档一律按简历处理，
+        # 每个上传都会生成一条简历版本，因此 JD 只能以文本形式提供）
+        documents = store_service.get_conversation_documents(conversation_id)
+        hint = "请先在「JD 分析」页粘贴岗位描述并开始分析"
+        if len(documents) >= 2:
+            hint += "（上传的 PDF/Word 都按简历处理，JD 需要用文本粘贴）"
+        return fail(f"当前会话还没有可用的 JD：{hint}，或在发起面试时直接提供 JD 文本", code=400)
 
-    result = get_interview_simulation_service().start_interview(jd_text, resume_text)
+    try:
+        with request_model_scope(payload.model, role):
+            result = get_interview_simulation_service().start_interview(jd_text, resume_text)
+    except ValueError as exc:
+        return fail(str(exc), code=400)
     questions = result.get("questions", [])
     if not questions:
         return fail("面试题生成失败", code=500)
@@ -138,7 +150,7 @@ def start_interview(payload: InterviewStartRequest) -> dict:
 
 
 @router.post("/interview/answer")
-def answer_interview(payload: InterviewAnswerRequest) -> dict:
+def answer_interview(payload: InterviewAnswerRequest, role: str = Depends(get_current_role)) -> dict:
     session_id = payload.session_id.strip()
     answer = payload.answer.strip()
 
@@ -181,14 +193,18 @@ def answer_interview(payload: InterviewAnswerRequest) -> dict:
     round_number = current_round + 1
 
     # LLM 评估（不占用数据库事务）
-    eval_result = get_interview_simulation_service().evaluate_answer(
-        jd_text=jd_text,
-        resume_text=resume_text or "",
-        history=history,
-        current_question=current_question,
-        user_answer=answer,
-        round_number=round_number,
-    )
+    try:
+        with request_model_scope(payload.model, role):
+            eval_result = get_interview_simulation_service().evaluate_answer(
+                jd_text=jd_text,
+                resume_text=resume_text or "",
+                history=history,
+                current_question=current_question,
+                user_answer=answer,
+                round_number=round_number,
+            )
+    except ValueError as exc:
+        return fail(str(exc), code=400)
     eval_result, eval_warnings = normalize_interview_evaluation(eval_result)
 
     score = eval_result.get("score")

@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
 from app.core.deps import (
     get_conversation_store_service,
     get_project_rewrite_service,
 )
+from app.core.model_scope import request_model_scope
 from app.core.response import fail, ok
+from app.core.security import get_current_role
 from app.repositories import (
     DatabaseManager,
     ProjectRewriteRepository,
@@ -42,7 +44,7 @@ def _rewrite_entity_to_dict(entity) -> dict:
 
 
 @router.post("/resume/project/rewrite")
-def rewrite_project(payload: ProjectRewriteRequest) -> dict:
+def rewrite_project(payload: ProjectRewriteRequest, role: str = Depends(get_current_role)) -> dict:
     """优化项目经历描述。
 
     2026-10-13 迁移到会话记录：结果落库 project_rewrites 并返回 rewrite_id，
@@ -71,7 +73,11 @@ def rewrite_project(payload: ProjectRewriteRequest) -> dict:
             if resume_text:
                 context = resume_text[:2000]
 
-    result = get_project_rewrite_service().rewrite(project_description, context)
+    try:
+        with request_model_scope(payload.model, role):
+            result = get_project_rewrite_service().rewrite(project_description, context)
+    except ValueError as exc:
+        return fail(str(exc), code=400)
 
     # 落库：旧版结果只返回不保存，刷新即丢；现在作为会话子节点留存
     import json

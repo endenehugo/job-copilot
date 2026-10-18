@@ -5,9 +5,9 @@ from dataclasses import dataclass
 
 from langchain_community.chat_models import ChatTongyi
 from app.core.llm_factory import build_chat_llm
+from app.core.model_scope import current_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.core.config import settings
 from app.core.json_utils import parse_llm_json
 
 logger = logging.getLogger(__name__)
@@ -36,8 +36,6 @@ PROJECT_REWRITE_SYSTEM_PROMPT = """你是一位资深的简历优化专家，擅
 
 @dataclass
 class ProjectRewriteService:
-    _llm: ChatTongyi | None = None
-
     def rewrite(self, project_description: str, context: str | None = None) -> dict:
         if not project_description or not project_description.strip():
             raise ValueError("项目描述不能为空")
@@ -46,13 +44,12 @@ class ProjectRewriteService:
         return self._parse_response(content)
 
     def _ensure_llm(self) -> ChatTongyi:
-        if self._llm is None:
-            self._llm = build_chat_llm(
-                model=settings.llm_model,
-                temperature=0.4,
-                top_p=0.8,
-            )
-        return self._llm
+        # 模型随请求走（ContextVar 注入，chat Agent 工具链内同样生效）
+        return build_chat_llm(
+            model=current_chat_model(),
+            temperature=0.4,
+            top_p=0.8,
+        )
 
     def _invoke_llm(self, project_description: str, context: str | None) -> str:
         llm = self._ensure_llm()

@@ -1,7 +1,8 @@
 import { reactive } from 'vue'
 import { defineStore } from 'pinia'
-import { conversationApi } from '../api'
+import { conversationApi, documentApi } from '../api'
 import { useConversationStore } from './conversation'
+import { useModelStore } from './model'
 
 function parseSse(raw) {
   let event = 'message'
@@ -22,6 +23,12 @@ export const useChatStore = defineStore('chat', {
   state: () => ({
     messages: [],
     pendingImages: [], // {url}
+    // 本次在输入框里上传的简历文档：{key,name,status,documentId}
+    // 文档按会话建索引（不是按消息），所以发送后不再当作"待发附件"
+    pendingDocs: [],
+    // 已回放过的会话 id：用于区分"切换会话"与"同会话刷新 detail"，
+    // 后者（如上传文档后刷新资料库）不能清空用户已选的待发图片
+    loadedConversationId: '',
     sending: false,
     streamController: null, // AbortController，用于"停止生成"与会话切换时中断接收
   }),
@@ -32,8 +39,19 @@ export const useChatStore = defineStore('chat', {
       this.streamController = null
     },
     loadFromDetail(detail) {
-      this.messages = (detail?.messages || []).map((m) => ({ role: m.role, content: m.content }))
-      this.pendingImages = []
+      const cid = useConversationStore().currentId || ''
+      const switched = cid !== this.loadedConversationId
+      const messages = (detail?.messages || []).map((m) => ({ role: m.role, content: m.content }))
+      if (switched) {
+        this.messages = messages
+        this.pendingImages = []
+        this.pendingDocs = []
+        this.loadedConversationId = cid
+        return
+      }
+      // 同会话内的 detail 刷新（上传文档后同步资料库）：不覆盖正在流式生成的回答
+      if (this.sending) return
+      this.messages = messages
     },
     async uploadImage(file) {
       const cid = useConversationStore().currentId
@@ -45,6 +63,34 @@ export const useChatStore = defineStore('chat', {
     },
     removeImage(index) {
       this.pendingImages.splice(index, 1)
+    },
+    // 简历/文档：落在会话级资料库（解析 + 建索引），上传完成后即可被对话检索
+    async uploadDoc(file) {
+      const cid = useConversationStore().currentId
+      const entry = reactive({
+        key: `doc_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        name: file.name,
+        status: 'uploading',
+        documentId: '',
+      })
+      this.pendingDocs.push(entry)
+      const form = new FormData()
+      form.append('conversation_id', cid)
+      form.append('file', file)
+      try {
+        const res = await documentApi.upload(form)
+        const doc = res.data?.document || {}
+        entry.documentId = doc.document_id || ''
+        entry.status = doc.status || 'indexed'
+        return entry
+      } catch (err) {
+        // 失败项保留在输入框上方，否则用户会以为文件已经进了资料库
+        entry.status = 'failed'
+        throw err
+      }
+    },
+    dismissDoc(index) {
+      this.pendingDocs.splice(index, 1)
     },
     async send(query) {
       const conv = useConversationStore()
@@ -58,8 +104,9 @@ export const useChatStore = defineStore('chat', {
       try {
         if (!conv.currentId) await conv.create()
 
+        // 用发送前捕获的 images 组内容：create() 可能触发 detail 回放清空 pendingImages
         const userContent = [
-          ...this.pendingImages.map((img) => `![image](${img.url})`),
+          ...images.map((url) => `![image](${url})`),
           query.trim(),
         ]
           .filter(Boolean)
@@ -67,13 +114,16 @@ export const useChatStore = defineStore('chat', {
 
         this.messages.push({ role: 'user', content: userContent })
         this.pendingImages = []
+        this.pendingDocs = this.pendingDocs.filter((d) => d.status === 'failed')
 
-        const res = await conversationApi.chat({
-          conversation_id: conv.currentId,
-          query,
-          mode: 'agent',
-          image_urls: images,
-        })
+        const res = await conversationApi.chat(
+          useModelStore().payloadWithModel({
+            conversation_id: conv.currentId,
+            query,
+            mode: 'agent',
+            image_urls: images,
+          })
+        )
         this.messages.push({
           role: 'assistant',
           content: res.data.answer,
@@ -112,8 +162,9 @@ export const useChatStore = defineStore('chat', {
       try {
         if (!conv.currentId) await conv.create()
 
+        // 同 send()：用捕获的 images，避免 create() 回放 detail 时清空待发图片
         const userContent = [
-          ...this.pendingImages.map((img) => `![image](${img.url})`),
+          ...images.map((url) => `![image](${url})`),
           query.trim(),
         ]
           .filter(Boolean)
@@ -121,19 +172,28 @@ export const useChatStore = defineStore('chat', {
 
         this.messages.push({ role: 'user', content: userContent })
         this.pendingImages = []
+        this.pendingDocs = this.pendingDocs.filter((d) => d.status === 'failed')
         this.messages.push(assistantMsg)
 
         const controller = new AbortController()
         this.streamController = controller
+        // 原生 fetch 不走 axios 拦截器，管理员 token 需手动带上，
+        // 否则流式端点按普通用户白名单校验模型，管理员的选型会被 400
+        const adminToken = localStorage.getItem('jc_admin_token')
         const resp = await fetch('/api/v1/conversation/chat/stream', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            conversation_id: conv.currentId,
-            query,
-            mode: 'agent',
-            image_urls: images,
-          }),
+          headers: {
+            'Content-Type': 'application/json',
+            ...(adminToken ? { 'X-Admin-Token': adminToken } : {}),
+          },
+          body: JSON.stringify(
+            useModelStore().payloadWithModel({
+              conversation_id: conv.currentId,
+              query,
+              mode: 'agent',
+              image_urls: images,
+            })
+          ),
           signal: controller.signal,
         })
         if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`)

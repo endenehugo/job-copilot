@@ -8,11 +8,14 @@ from pydantic import BaseModel
 class JobAnalyzeRequest(BaseModel):
     conversation_id: str = ""
     jd_text: str = ""
+    # 空串 = 服务端按角色取默认值；越权模型由服务端 400
+    model: str = ""
 
 
 class ProjectRewriteRequest(BaseModel):
     conversation_id: str = ""
     project_description: str = ""
+    model: str = ""
 
 
 class JobAnalysisDeleteRequest(BaseModel):
@@ -26,3 +29,4 @@ class ProjectRewriteDeleteRequest(BaseModel):
 class ScreenshotAnalyzeRequest(BaseModel):
     conversation_id: str = ""
     image_url: str = ""
+    model: str = ""

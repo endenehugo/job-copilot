@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
 from app.core.deps import (
     get_conversation_store_service,
@@ -17,7 +17,9 @@ from app.core.deps import (
     get_job_description_service,
     get_resume_scoring_service,
 )
+from app.core.model_scope import request_model_scope
 from app.core.response import fail, ok
+from app.core.security import get_current_role
 from app.repositories import DatabaseManager, JobAnalysisRepository
 from app.schemas.job import (
     JobAnalysisDeleteRequest,
@@ -47,7 +49,7 @@ def _read_latest_resume_text(conversation_id: str) -> str:
 
 
 @router.post("/job/analyze")
-def analyze_job(payload: JobAnalyzeRequest) -> dict:
+def analyze_job(payload: JobAnalyzeRequest, role: str = Depends(get_current_role)) -> dict:
     conversation_id = payload.conversation_id.strip()
     jd_text = payload.jd_text.strip()
 
@@ -66,8 +68,12 @@ def analyze_job(payload: JobAnalyzeRequest) -> dict:
             return fail("当前会话未上传简历，请先上传简历", code=400)
         return fail("无法读取简历解析文本", code=500)
 
-    jd_analysis = get_job_description_service().analyze(jd_text)
-    scoring_result = get_resume_scoring_service().score(resume_text, jd_text, jd_analysis)
+    try:
+        with request_model_scope(payload.model, role):
+            jd_analysis = get_job_description_service().analyze(jd_text)
+            scoring_result = get_resume_scoring_service().score(resume_text, jd_text, jd_analysis)
+    except ValueError as exc:
+        return fail(str(exc), code=400)
     analysis_id = save_analysis(
         conversation_id=conversation_id,
         jd_text=jd_text,
@@ -153,7 +159,7 @@ def delete_job_analysis(payload: JobAnalysisDeleteRequest) -> dict:
 
 
 @router.post("/job/analyze-from-screenshot")
-def analyze_from_screenshot(payload: ScreenshotAnalyzeRequest) -> dict:
+def analyze_from_screenshot(payload: ScreenshotAnalyzeRequest, role: str = Depends(get_current_role)) -> dict:
     conversation_id = payload.conversation_id.strip()
     image_url = payload.image_url.strip()
 
@@ -192,9 +198,13 @@ def analyze_from_screenshot(payload: ScreenshotAnalyzeRequest) -> dict:
             return fail("当前会话未上传简历，请先上传简历", code=400)
         return fail("无法读取简历解析文本", code=500)
 
-    # 3-4. 解析 JD 并评分
-    jd_analysis = get_job_description_service().analyze(jd_text)
-    scoring_result = get_resume_scoring_service().score(resume_text, jd_text, jd_analysis)
+    # 3-4. 解析 JD 并评分（vl 提取文本不走用户所选模型，主链路走）
+    try:
+        with request_model_scope(payload.model, role):
+            jd_analysis = get_job_description_service().analyze(jd_text)
+            scoring_result = get_resume_scoring_service().score(resume_text, jd_text, jd_analysis)
+    except ValueError as exc:
+        return fail(str(exc), code=400)
 
     # 5. 落库
     analysis_id = save_analysis(

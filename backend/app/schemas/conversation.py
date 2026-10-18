@@ -15,6 +15,8 @@ class ChatRequest(BaseModel):
     query: str = ""
     mode: str = "agent"
     image_urls: list[str] = []
+    # 本次请求使用的模型；空串 = 服务端按角色取默认值，越权模型由服务端 400
+    model: str = ""
 
 
 class DeleteConversationRequest(BaseModel):

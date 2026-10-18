@@ -112,6 +112,15 @@ class Settings(BaseSettings):
     llm_stream_timeout: int = 180
     llm_max_retries: int = 2
 
+    # —— 管理员认证 ——
+    # AUTH_SECRET：JWT 签名密钥；缺失时用进程内随机值并告警（重启后登录态失效）。
+    # ADMIN_USERNAME / ADMIN_INIT_PASSWORD：启动时 admin_users 表为空则自动建初始
+    # 管理员；表非空则忽略。两者都未配置时不会创建任何管理员（登录将不可用）。
+    auth_secret: str = ""
+    auth_token_expire_hours: int = 24 * 7
+    admin_username: str = ""
+    admin_init_password: str = ""
+
     mysql_host: str = "127.0.0.1"
     mysql_port: int = 3306
     mysql_user: str = "root"

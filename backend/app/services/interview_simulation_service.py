@@ -5,9 +5,9 @@ from dataclasses import dataclass
 
 from langchain_community.chat_models import ChatTongyi
 from app.core.llm_factory import build_chat_llm
+from app.core.model_scope import current_chat_model
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.core.config import settings
 from app.core.json_utils import parse_llm_json
 
 logger = logging.getLogger(__name__)
@@ -68,9 +68,6 @@ INTERVIEW_ANSWER_SYSTEM_PROMPT = """你是一位资深的面试官，正在对�
 
 @dataclass
 class InterviewSimulationService:
-    _start_llm: ChatTongyi | None = None
-    _answer_llm: ChatTongyi | None = None
-
     def start_interview(self, jd_text: str, resume_text: str) -> dict:
         if not jd_text or not jd_text.strip():
             raise ValueError("JD 文本不能为空")
@@ -98,22 +95,19 @@ class InterviewSimulationService:
         return self._parse_response(content)
 
     def _ensure_start_llm(self) -> ChatTongyi:
-        if self._start_llm is None:
-            self._start_llm = build_chat_llm(
-                model=settings.llm_model,
-                temperature=0.5,
-                top_p=0.8,
-            )
-        return self._start_llm
+        # 模型随请求走（ContextVar 注入，chat Agent 工具链内同样生效）
+        return build_chat_llm(
+            model=current_chat_model(),
+            temperature=0.5,
+            top_p=0.8,
+        )
 
     def _ensure_answer_llm(self) -> ChatTongyi:
-        if self._answer_llm is None:
-            self._answer_llm = build_chat_llm(
-                model=settings.llm_model,
-                temperature=0.4,
-                top_p=0.7,
-            )
-        return self._answer_llm
+        return build_chat_llm(
+            model=current_chat_model(),
+            temperature=0.4,
+            top_p=0.7,
+        )
 
     def _invoke_start_llm(self, jd_text: str, resume_text: str) -> str:
         llm = self._ensure_start_llm()

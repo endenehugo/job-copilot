@@ -39,6 +39,9 @@ def _build_service() -> ConversationChatService:
 
     svc.agent_llm = MagicMock()
     svc.agent_llm.stream.return_value = iter([AIMessageChunk(content="他是本科学历。")])
+    # 模型改为按请求取客户端后，测试桩接到 _get_agent_llm/_get_qa_llm 接缝上
+    svc._get_agent_llm = lambda: svc.agent_llm
+    svc._get_qa_llm = lambda: svc.agent_llm
 
     # _prepare_chat 被替换后不会走初始化流程，这里补一个可用的 prompt
     svc._ensure_initialized = lambda: None

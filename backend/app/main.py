@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import conversations, documents, exports, interviews, jobs, knowledge, resumes, system
+from app.api import auth, conversations, documents, exports, interviews, jobs, knowledge, models, resumes, system
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.response import ok
@@ -37,6 +37,12 @@ async def lifespan(application: FastAPI):
     except Exception as exc:  # 检测本身异常不能阻断启动
         application.state.keys_ok = None
         logger.warning("API Key 启动检测执行失败：%s", exc)
+    # 管理员引导：admin_users 表为空且配置了 ADMIN_* 时自动建初始管理员
+    from app.api.auth import ensure_initial_admin
+    try:
+        ensure_initial_admin()
+    except Exception as exc:
+        logger.warning("管理员引导执行失败（不影响启动）：%s", exc)
     yield
 
 
@@ -57,6 +63,8 @@ app.add_middleware(
 
 register_exception_handlers(app)
 app.include_router(system.router)
+app.include_router(auth.router)
+app.include_router(models.router)
 app.include_router(conversations.router)
 app.include_router(conversations.image_router)
 app.include_router(documents.router)

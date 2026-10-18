@@ -42,6 +42,7 @@ def build_agent_system_prompt() -> str:
     )
 
 from app.core.llm_factory import build_chat_llm
+from app.core.model_scope import current_chat_model
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
@@ -73,9 +74,35 @@ class ConversationChatService:
         self.agent_llm = None
         self.vl_llm = None
         self.tool_dic = None
+        self.tools = None
         self.qa_prompt = None
         self.agent_prompt = None
         self.multimodal_system_prompt = None
+        # 记录 qa/agent 客户端当前绑定的模型，请求换了模型才重建
+        self._qa_llm_model = None
+        self._agent_llm_model = None
+
+    def _get_qa_llm(self):
+        """按本次请求所选模型取问答客户端（build_chat_llm 有 lru_cache，按模型切换近乎零成本）。"""
+        model = current_chat_model()
+        if self.qa_llm is None or self._qa_llm_model != model:
+            self.qa_llm = build_chat_llm(
+                streaming=True,
+                model=model,
+                temperature=0.8,
+                top_p=0.7,
+            )
+            self._qa_llm_model = model
+        return self.qa_llm
+
+    def _get_agent_llm(self):
+        """按本次请求所选模型取绑定工具后的 Agent 客户端。"""
+        model = current_chat_model()
+        if self.agent_llm is None or self._agent_llm_model != model:
+            self._ensure_initialized()
+            self.agent_llm = self._get_qa_llm().bind_tools(self.tools)
+            self._agent_llm_model = model
+        return self.agent_llm
 
     def _prepare_chat(self, conversation_id, query, mode, image_urls):
         """公共前置流程：模式归一、历史压缩、上下文检索、用户消息组装。"""
@@ -145,7 +172,7 @@ class ConversationChatService:
             if normalized_mode == "agent":
                 answer, files, tool_warnings = self._invoke_agent(prompt_messages)
             else:
-                answer = self.qa_llm.invoke(prompt_messages).content
+                answer = self._get_qa_llm().invoke(prompt_messages).content
 
         answer = answer or "抱歉，我暂时无法生成回答。"
 
@@ -222,7 +249,7 @@ class ConversationChatService:
                 streamed_text = ""
                 merged = None
                 try:
-                    for chunk in self.agent_llm.stream(prompt_messages):
+                    for chunk in self._get_agent_llm().stream(prompt_messages):
                         merged = chunk if merged is None else merged + chunk
                         if chunk.content:
                             streamed_text += chunk.content
@@ -248,7 +275,7 @@ class ConversationChatService:
                 else:
                     answer = streamed_text
             else:
-                answer = self.qa_llm.invoke(prompt_messages).content
+                answer = self._get_qa_llm().invoke(prompt_messages).content
                 if answer:
                     yield {"event": "delta", "data": {"text": answer}}
 
@@ -305,7 +332,7 @@ class ConversationChatService:
         step = 0
 
         for round_no in range(self._MAX_TOOL_ROUNDS):
-            response = self.agent_llm.invoke(messages)
+            response = self._get_agent_llm().invoke(messages)
             messages.append(response)
             tool_calls = response.tool_calls or []
             if not tool_calls:
@@ -356,22 +383,19 @@ class ConversationChatService:
             return f"工具执行失败：{exc}", True
 
     def _ensure_initialized(self):
-        if self.qa_llm is not None:
+        """初始化与模型无关的部分：vl 客户端、工具、提示词。
+
+        qa/agent 客户端不再在此固化——模型随请求走，见 _get_qa_llm/_get_agent_llm。
+        """
+        if self.vl_llm is not None:
             return
 
-        self.qa_llm = build_chat_llm(
-            streaming=True,
-            model=settings.llm_model,
-            temperature=0.8,
-            top_p=0.7,
-        )
         self.vl_llm = build_chat_llm(
             model=settings.multimodal_model,
             temperature=0.7,
         )
-        tools = [MultiplyTool(), WebSearchTool(), WordDocumentTool(), HtmlDocumentTool(), JdParserTool(), ResumeScoreTool(), ProjectRewriteTool(), MockInterviewTool(), SkillTool()]
-        self.tool_dic = {tool.name: tool for tool in tools}
-        self.agent_llm = self.qa_llm.bind_tools(tools)
+        self.tools = [MultiplyTool(), WebSearchTool(), WordDocumentTool(), HtmlDocumentTool(), JdParserTool(), ResumeScoreTool(), ProjectRewriteTool(), MockInterviewTool(), SkillTool()]
+        self.tool_dic = {tool.name: tool for tool in self.tools}
 
         self.qa_prompt = ChatPromptTemplate.from_messages([
             ("system", "你是一个专业的问答助手。你将收到聊天历史、会话文档上下文和用户问题。请优先基于当前会话文档回答；如果上下文为空或不足，可以明确说明并结合通用知识补充。"),
@@ -415,7 +439,7 @@ class ConversationChatService:
         files: list[dict] = []
         warnings: list[str] = []
         for _ in range(self._MAX_TOOL_ROUNDS):
-            response = self.agent_llm.invoke(messages)
+            response = self._get_agent_llm().invoke(messages)
             messages.append(response)
             tool_calls = response.tool_calls or []
             if not tool_calls:

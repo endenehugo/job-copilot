@@ -1,18 +1,23 @@
 <script setup>
-import { onMounted, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { notifyError } from '../api'
 import { useChatStore } from '../stores/chat'
 import { useConversationStore } from '../stores/conversation'
 import { useInterviewStore } from '../stores/interview'
 import { useResumeStore } from '../stores/resume'
-import { openStartDialog } from '../utils/startDialog'
+import { useAuthStore } from '../stores/auth'
+import { useModelStore } from '../stores/model'
 
+import SidebarNav from '../components/shell/SidebarNav.vue'
+import SidebarFooter from '../components/shell/SidebarFooter.vue'
+import AppIcon from '../components/shell/AppIcon.vue'
 import ConversationList from '../components/sidebar/ConversationList.vue'
 import DocumentPanel from '../components/sidebar/DocumentPanel.vue'
 import KnowledgePanel from '../components/sidebar/KnowledgePanel.vue'
 
 import MessageList from '../components/chat/MessageList.vue'
 import Composer from '../components/chat/Composer.vue'
+import ModelSelector from '../components/topbar/ModelSelector.vue'
 import InterviewView from '../components/interview/InterviewView.vue'
 import AnalysisResultView from '../components/analysis/AnalysisResultView.vue'
 import RewriteResultView from '../components/rewrite/RewriteResultView.vue'
@@ -22,18 +27,38 @@ const conv = useConversationStore()
 const chat = useChatStore()
 const interview = useInterviewStore()
 const resume = useResumeStore()
-
-const CHIPS = [
-  '这份文档主要介绍了什么？',
-  '帮我总结刚上传的简历的亮点',
-  'RAG 的检索链路一般包含哪些环节？',
-  '模拟面试一般会问哪些项目深挖问题？',
-]
+const auth = useAuthStore()
+const modelStore = useModelStore()
 
 const ACTIVE_TITLES = {
-  interview: '🎤 模拟面试',
-  analysis: '📊 JD 分析',
-  rewrite: '✏️ 项目优化',
+  interview: '模拟面试',
+  analysis: 'JD 分析',
+  rewrite: '项目优化',
+}
+
+const collapsed = ref(localStorage.getItem('jc_sidebar_collapsed') === '1')
+const mobileOpen = ref(false)
+const narrow = ref(false)
+const docsOpen = ref(false)
+const kbOpen = ref(false)
+let mq = null
+
+function syncNarrow(e) {
+  narrow.value = e.matches
+  if (!e.matches) mobileOpen.value = false
+}
+
+function onToggleSidebar() {
+  if (narrow.value) mobileOpen.value = !mobileOpen.value
+  else {
+    collapsed.value = !collapsed.value
+    localStorage.setItem('jc_sidebar_collapsed', collapsed.value ? '1' : '0')
+  }
+}
+
+function onOpenPanel(panel) {
+  if (panel === 'docs') docsOpen.value = true
+  else if (panel === 'kb') kbOpen.value = true
 }
 
 // 切换会话后：聊天从 detail 回放，简历版本等按会话维度刷新。
@@ -47,10 +72,18 @@ watch(
   (cid) => {
     chat.stopStreaming() // 旧会话的流式回答不再接收，避免后台空跑
     resume.load(cid)
+    mobileOpen.value = false
   }
 )
 
 onMounted(async () => {
+  mq = window.matchMedia('(max-width: 900px)')
+  syncNarrow(mq)
+  mq.addEventListener('change', syncNarrow)
+
+  // 先验 token（失效则降级普通用户），再按角色拉模型清单；失败不阻塞主功能
+  await auth.restore().catch(() => {})
+  await modelStore.load().catch(() => {})
   try {
     await conv.loadList()
   } catch (err) {
@@ -58,39 +91,48 @@ onMounted(async () => {
   }
 })
 
-function sendChip(text) {
-  // 旧代码没有 catch：sendStream 失败会变成未处理的 Promise rejection，界面毫无反馈
-  chat.sendStream(text).catch((err) => notifyError(err))
-}
+onBeforeUnmount(() => {
+  if (mq) mq.removeEventListener('change', syncNarrow)
+})
 </script>
 
 <template>
-  <div class="app-shell">
-    <aside class="sidebar">
-      <div class="brand">
-        <h1>Job Copilot</h1>
-        <div class="subtitle">求职助手 Agent 平台</div>
+  <div class="app-shell" :class="{ 'is-collapsed': collapsed && !narrow }">
+    <aside class="sidebar" :class="{ 'is-open': mobileOpen }">
+      <div class="sidebar-head">
+        <span class="brand">Job Copilot</span>
+        <button class="icon-btn" title="收起侧栏" @click="onToggleSidebar">
+          <AppIcon name="panel" :size="17" />
+        </button>
       </div>
 
-      <el-collapse>
-        <el-collapse-item title="💬 会话" name="conv">
-          <ConversationList />
-        </el-collapse-item>
-        <el-collapse-item title="📄 文档" name="doc">
-          <DocumentPanel />
-        </el-collapse-item>
-        <el-collapse-item title="📚 知识库" name="kb">
-          <KnowledgePanel />
-        </el-collapse-item>
-      </el-collapse>
+      <SidebarNav @open-panel="onOpenPanel" />
+
+      <div class="sidebar-scroll">
+        <div class="section-label">最近</div>
+        <ConversationList />
+      </div>
+
+      <SidebarFooter />
     </aside>
 
+    <div v-if="mobileOpen" class="sidebar-backdrop" @click="mobileOpen = false"></div>
+
     <main class="workspace">
-      <header class="topbar">
-        <span class="title">
-          {{ ACTIVE_TITLES[conv.activeType] ? `${ACTIVE_TITLES[conv.activeType]} · ${conv.current?.title || ''}` : conv.current?.title || 'Job Copilot' }}
+      <header class="main-head">
+        <button v-if="collapsed || narrow" class="icon-btn" title="展开侧栏" @click="onToggleSidebar">
+          <AppIcon name="panel" :size="17" />
+        </button>
+        <span class="main-title">
+          {{
+            ACTIVE_TITLES[conv.activeType]
+              ? `${ACTIVE_TITLES[conv.activeType]}${conv.current?.title ? ' · ' + conv.current.title : ''}`
+              : conv.current?.title || ''
+          }}
         </span>
-        <span class="badge">FastAPI + Vue3 · LLM + RAG</span>
+        <div class="main-head-right">
+          <ModelSelector />
+        </div>
       </header>
 
       <div class="main-area">
@@ -99,53 +141,22 @@ function sendChip(text) {
         <AnalysisResultView v-else-if="conv.activeType === 'analysis'" />
         <RewriteResultView v-else-if="conv.activeType === 'rewrite'" />
 
-        <!-- 聊天视图 -->
-        <template v-else>
+        <!-- 聊天视图：空态与对话态共用同一个 Composer 实例 -->
+        <div v-else class="thread" :class="{ 'thread--empty': !chat.messages.length }">
           <MessageList v-if="chat.messages.length" />
-
-          <section v-if="!chat.messages.length" class="welcome">
-            <h2>欢迎使用 Job Copilot</h2>
-            <p>上传简历 → 输入 JD → 查看匹配评分 → 优化项目 → 模拟面试</p>
-            <div class="chips">
-              <div v-for="c in CHIPS" :key="c" class="chip" @click="sendChip(c)">{{ c }}</div>
-            </div>
-            <!-- 发起任务入口：三入口对称（P5 决策），对话框由 StartWorkDialog 承载 -->
-            <div class="start-entry">
-              <div class="start-entry-title">或直接发起一场任务</div>
-              <div class="start-buttons">
-                <el-button type="primary" size="small" @click="openStartDialog('interview')">🎤 模拟面试</el-button>
-                <el-button type="primary" plain size="small" @click="openStartDialog('analysis')">📊 分析 JD</el-button>
-                <el-button type="primary" plain size="small" @click="openStartDialog('rewrite')">✏️ 优化项目</el-button>
-              </div>
-            </div>
-          </section>
-
-          <Composer />
-        </template>
+          <h1 v-else class="thread-hero">随时可以开始。</h1>
+          <Composer :variant="chat.messages.length ? 'docked' : 'hero'" @open-panel="onOpenPanel" />
+        </div>
       </div>
 
       <StartWorkDialog />
+
+      <el-drawer v-model="docsOpen" title="资料库" size="380px" class="side-drawer">
+        <DocumentPanel />
+      </el-drawer>
+      <el-drawer v-model="kbOpen" title="知识库" size="380px" class="side-drawer">
+        <KnowledgePanel />
+      </el-drawer>
     </main>
   </div>
 </template>
-
-<style scoped>
-.start-entry {
-  margin-top: 16px;
-  padding: 12px 16px;
-  border: 1px dashed var(--el-color-primary-light-5, #a0cfff);
-  border-radius: 8px;
-  background: var(--el-color-primary-light-9, #ecf5ff);
-}
-.start-entry-title {
-  font-size: 13px;
-  font-weight: 600;
-  margin-bottom: 8px;
-  color: var(--el-color-primary);
-}
-.start-buttons {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-</style>

@@ -16,7 +16,7 @@ import re
 import shutil
 import uuid
 
-from fastapi import APIRouter, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
 from app.core.config import settings
@@ -25,7 +25,10 @@ from app.core.deps import (
     get_conversation_store_service,
     get_document_index_service,
 )
+from app.core.model_policy import resolve_model
+from app.core.model_scope import request_model_scope
 from app.core.response import fail, ok
+from app.core.security import get_current_role
 from app.schemas.conversation import ChatRequest, CreateConversationRequest, DeleteConversationRequest
 from app.utils import ResourceUtils
 
@@ -65,7 +68,7 @@ def conversation_detail(conversation_id: str = Query(default="")) -> dict:
 
 
 @router.post("/conversation/chat")
-def conversation_chat(payload: ChatRequest) -> dict:
+def conversation_chat(payload: ChatRequest, role: str = Depends(get_current_role)) -> dict:
     conversation_id = payload.conversation_id.strip()
     query = payload.query.strip()
     image_urls = [item.strip() for item in payload.image_urls if item and item.strip()]
@@ -75,9 +78,13 @@ def conversation_chat(payload: ChatRequest) -> dict:
     if not query and not image_urls:
         return fail("query 参数不能为空", code=400)
 
-    result = get_conversation_chat_service().chat(
-        conversation_id, query, payload.mode, image_urls
-    )
+    try:
+        with request_model_scope(payload.model, role):
+            result = get_conversation_chat_service().chat(
+                conversation_id, query, payload.mode, image_urls
+            )
+    except ValueError as exc:
+        return fail(str(exc), code=400)
     # 工具链异常结束的告警从 data 提升到信封，让前端拦截器统一提示
     warnings = result.pop("warnings", None) or []
     # 旧契约：信封 message 携带回答文本，data 携带完整结果
@@ -85,7 +92,7 @@ def conversation_chat(payload: ChatRequest) -> dict:
 
 
 @router.post("/conversation/chat/stream")
-def conversation_chat_stream(payload: ChatRequest):
+def conversation_chat_stream(payload: ChatRequest, role: str = Depends(get_current_role)):
     """SSE 流式问答：meta -> delta* -> sources -> verification -> done。"""
     conversation_id = payload.conversation_id.strip()
     query = payload.query.strip()
@@ -96,15 +103,23 @@ def conversation_chat_stream(payload: ChatRequest):
     if not query and not image_urls:
         return fail("query 参数不能为空", code=400)
 
+    # 模型白名单先在端点内校验（快速失败），作用域必须在生成器内部开启——
+    # 生成器在响应阶段才被消费，端点里 with 一下就退出时生成器还没跑
+    try:
+        selected_model = resolve_model(role, payload.model)
+    except ValueError as exc:
+        return fail(str(exc), code=400)
+
     def sse(event: str, data) -> str:
         return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
     def generate():
         try:
-            for event in get_conversation_chat_service().chat_stream(
-                conversation_id, query, payload.mode, image_urls
-            ):
-                yield sse(event["event"], event["data"])
+            with request_model_scope(selected_model, role):
+                for event in get_conversation_chat_service().chat_stream(
+                    conversation_id, query, payload.mode, image_urls
+                ):
+                    yield sse(event["event"], event["data"])
         except ValueError as exc:
             yield sse("error", {"message": str(exc)})
         except Exception as exc:

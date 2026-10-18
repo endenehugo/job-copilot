@@ -1,9 +1,18 @@
 import client, { longClient, BULK_TIMEOUT } from './client'
 
-export { notifyError } from './client'
+export { notifyError, ADMIN_TOKEN_KEY } from './client'
 
 // 分组依据：普通 CRUD 走 30 秒；上传 / LLM 分析 / 导出走 120 秒；
 // 知识库重建与自主扩充实测 1~2 分钟，单独给 300 秒。
+
+export const authApi = {
+  login: (data) => client.post('/auth/login', data),
+  me: () => client.get('/auth/me'),
+}
+
+export const modelsApi = {
+  list: () => client.get('/models'),
+}
 
 export const conversationApi = {
   create: (data) => client.post('/conversation/create', data),

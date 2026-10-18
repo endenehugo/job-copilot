@@ -7,9 +7,21 @@ export const DEFAULT_TIMEOUT = 30000
 export const LONG_TIMEOUT = 120000
 export const BULK_TIMEOUT = 300000
 
+// 管理员登录态的唯一存储键，stores/auth 与本文件共用
+export const ADMIN_TOKEN_KEY = 'jc_admin_token'
+
 const client = axios.create({ baseURL: '/api/v1', timeout: DEFAULT_TIMEOUT })
 // 上传、LLM 分析、导出等长操作单独放宽
 export const longClient = axios.create({ baseURL: '/api/v1', timeout: LONG_TIMEOUT })
+
+// 管理员身份随每个请求携带；无 token 即普通用户，后端按角色做模型白名单
+function attachAuth(instance) {
+  instance.interceptors.request.use((config) => {
+    const token = localStorage.getItem(ADMIN_TOKEN_KEY)
+    if (token) config.headers['X-Admin-Token'] = token
+    return config
+  })
+}
 
 export function humanizeError(error) {
   if (!error.response) {
@@ -65,6 +77,8 @@ function attachInterceptors(instance) {
 
 attachInterceptors(client)
 attachInterceptors(longClient)
+attachAuth(client)
+attachAuth(longClient)
 
 export function notifyError(err, fallback = '操作失败') {
   ElMessage.error(err?.message || fallback)

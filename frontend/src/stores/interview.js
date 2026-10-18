@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { interviewApi, notifyError } from '../api'
 import { useConversationStore } from './conversation'
+import { useModelStore } from './model'
 
 export const useInterviewStore = defineStore('interview', {
   state: () => ({
@@ -106,16 +107,20 @@ export const useInterviewStore = defineStore('interview', {
     },
 
     // ---- 作答流程 ----
-    async start() {
+    // jdText：调用方已知的 JD（如「JD 分析」页粘贴但还没点分析的草稿），
+    // 为空时后端回退到该会话最近一次分析记录里的 JD 原文。
+    async start(jdText = '') {
       const conv = useConversationStore()
       const cid = conv.currentId
       this.starting = true
       try {
-        const res = await interviewApi.start({
-          conversation_id: cid,
-          direction: this.direction,
-          jd_text: '',
-        })
+        const res = await interviewApi.start(
+          useModelStore().payloadWithModel({
+            conversation_id: cid,
+            direction: this.direction,
+            jd_text: (jdText || '').trim(),
+          })
+        )
         this.session = res.data
         this.rounds = []
         this.answerText = ''
@@ -132,11 +137,13 @@ export const useInterviewStore = defineStore('interview', {
       if (!text) throw new Error('请输入回答')
       this.answering = true
       try {
-        const res = await interviewApi.answer({
-          session_id: this.session.session_id,
-          answer: text,
-          question_index: this.session.question_index,
-        })
+        const res = await interviewApi.answer(
+          useModelStore().payloadWithModel({
+            session_id: this.session.session_id,
+            answer: text,
+            question_index: this.session.question_index,
+          })
+        )
         this.rounds.push(res.data)
         this.answerText = ''
         if (res.data.action === 'continue' && res.data.next_question) {

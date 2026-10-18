@@ -1,4 +1,5 @@
 from .mysql_base import Base, DatabaseManager
+from .admin_user_repository import AdminUser, AdminUserRepository
 from .conversation_repository import Conversation, ConversationRepository
 from .message_repository import ConversationMessage, MessageRepository
 from .document_repository import ConversationDocument, DocumentRepository
@@ -10,6 +11,8 @@ from .project_rewrite_repository import ProjectRewrite, ProjectRewriteRepository
 __all__ = [
     "Base",
     "DatabaseManager",
+    "AdminUser",
+    "AdminUserRepository",
     "Conversation",
     "ConversationRepository",
     "ConversationMessage",

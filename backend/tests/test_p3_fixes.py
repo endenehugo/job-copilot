@@ -124,6 +124,8 @@ def test_agent_tool_exception_returns_tool_message():
         AIMessage(content="done"),
     ]
     service.agent_llm = SimpleNamespace(invoke=lambda messages: responses.pop(0))
+    # 模型改为按请求取客户端后，测试桩接到 _get_agent_llm 接缝上
+    service._get_agent_llm = lambda: service.agent_llm
 
     messages = [HumanMessage(content="hi")]
     output, files, warnings = service._invoke_agent(messages)
