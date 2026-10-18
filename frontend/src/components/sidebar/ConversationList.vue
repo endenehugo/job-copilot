@@ -1,5 +1,5 @@
 <script setup>
-import { onBeforeUnmount, onMounted, reactive } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { notifyError } from '../../api'
 import { useConversationStore } from '../../stores/conversation'
@@ -86,6 +86,25 @@ function onToggleAll(c) {
   })
   persistExpanded()
 }
+
+// 展开状态存在 localStorage 里，但列表数据不在——刷新后分组看着是展开的，
+// 里面却写着"暂无记录"，用户会以为记录被删了。会话列表一到位就补一次懒加载。
+// hydrated 只是省重复请求，store 自身的 loadedCids 才是真正的守卫。
+const hydrated = new Set()
+watch(
+  () => store.conversations,
+  (list) => {
+    for (const c of list || []) {
+      if (hydrated.has(c.conversation_id)) continue
+      hydrated.add(c.conversation_id)
+      const st = groupState(c.conversation_id)
+      GROUPS.forEach((g) => {
+        if (st[g.key] && groupCount(c, g.key)) loadGroup(c.conversation_id, g.key)
+      })
+    }
+  },
+  { immediate: true }
+)
 
 async function onSelect(c) {
   if (c.conversation_id === store.currentId && store.activeType === 'conversation') return
