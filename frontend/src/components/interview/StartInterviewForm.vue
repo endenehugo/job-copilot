@@ -64,7 +64,9 @@ async function onStart() {
 
   try {
     await interview.start(draft.value)
-    ElMessage.success(`面试已开始，共 ${interview.session?.total_questions ?? '?'} 题`)
+    // 开场只出第 1 题（后面的题目按回答自适应生成），所以不再报"共 N 题"，
+    // 否则会读成"这场面试只有 1 题"
+    ElMessage.success('面试已开始，题目会随回答逐轮推进')
     emit('started')
   } catch (err) {
     notifyError(err)

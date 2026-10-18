@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
+import { ElMessage } from 'element-plus'
 import { interviewApi, notifyError } from '../api'
+import { postSse } from '../utils/sse'
 import { useConversationStore } from './conversation'
 import { useModelStore } from './model'
 
@@ -8,6 +10,9 @@ export const useInterviewStore = defineStore('interview', {
     direction: 'general',
     starting: false,
     answering: false,
+    // 作答流式的阶段提示：'' | 'evaluating'（在写评价）| 'question'（评价完，在生成下一题）| 'summary'
+    // 评价正文本身直接写进 rounds 里那条 pending 占位，不再单独存一份
+    liveStage: '',
     session: null, // {session_id, current_question:{question}, question_index, total_questions}
     rounds: [],    // 每轮 {action, evaluation, score, next_question, total_rounds}
     answerText: '',
@@ -32,8 +37,10 @@ export const useInterviewStore = defineStore('interview', {
       const last = s.rounds[s.rounds.length - 1]
       return last && last.action === 'summary' ? last : null
     },
-    // 已完成的轮次（不含总结那条），用于逐轮展示评分与评价
+    // 已完成的轮次（不含总结那条与提交中的占位条），用于逐轮展示评分与评价
     answeredRounds: (s) => s.rounds.filter((r) => r.action !== 'summary'),
+    // 已落库的轮次：提交瞬间会先插一条 pending 占位，轮次标题不该跟着跳
+    doneRounds: (s) => s.rounds.filter((r) => r.action !== 'summary' && !r.pending),
   },
   actions: {
     // ---- 会话树子节点（懒加载） ----
@@ -85,6 +92,7 @@ export const useInterviewStore = defineStore('interview', {
           const nextQ = detail.messages[i + 2]
           rounds.push({
             action: 'continue',
+            answer: m.content,
             evaluation: evaluation?.evaluation || '',
             score: evaluation?.score ?? null,
             next_question: nextQ?.msg_type === 'question' ? nextQ.content : '',
@@ -135,32 +143,78 @@ export const useInterviewStore = defineStore('interview', {
     async submitAnswer() {
       const text = this.answerText.trim()
       if (!text) throw new Error('请输入回答')
+      const sessionId = this.session.session_id
       this.answering = true
+      this.liveStage = 'evaluating'
+      // 先插一条占位：提交瞬间回答就变成气泡，输入框清空，评价随后流式填进同一条。
+      // 否则从"提交"到"done"这几秒里，用户只能看到输入框里那段被禁用的旧文本，
+      // 分不清是提交成功还是在排队。
+      this.rounds.push({
+        action: 'continue',
+        answer: text,
+        evaluation: '',
+        score: null,
+        next_question: '',
+        pending: true,
+      })
+      const at = this.rounds.length - 1
+      this.answerText = ''
+      let result = null
       try {
-        const res = await interviewApi.answer(
+        // 流式：评价边生成边显示（首字约 0.5s），题目在流末尾一次性到达。
+        // 后端在流结束前完成落库，done 里带的是落库后的最终结果，
+        // 所以这里拿到 result 就等于"已经存好了"，不需要再查一次详情。
+        await postSse(
+          '/interview/answer/stream',
           useModelStore().payloadWithModel({
             session_id: this.session.session_id,
             answer: text,
             question_index: this.session.question_index,
-          })
+          }),
+          (event, data) => {
+            if (this.session?.session_id !== sessionId) return
+            const row = this.rounds[at]
+            if (!row) return
+            if (event === 'evaluation') row.evaluation = data.text || ''
+            else if (event === 'score') {
+              row.score = data.score ?? null
+              this.liveStage = data.action === 'summary' ? 'summary' : 'question'
+            } else if (event === 'done') result = data
+          }
         )
-        this.rounds.push(res.data)
-        this.answerText = ''
-        if (res.data.action === 'continue' && res.data.next_question) {
-          this.session.question_index = res.data.question_index
-        } else if (res.data.action === 'summary') {
+        // 断流时 result 为空：评价可能已经显示出来了，但没落库，必须让用户重试，
+        // 不能把预览当成记录留下来。
+        if (!result) throw new Error('评价结果不完整，请重试')
+        // 作答途中用户可能切到别的场次：后端已经落库了，但当前视图不该被这次结果污染
+        if (this.session?.session_id !== sessionId) return
+        this.rounds.splice(at, 1, { ...result, answer: text })
+        if (result.action === 'continue' && result.next_question) {
+          this.session.question_index = result.question_index
+        } else if (result.action === 'summary') {
           // 场次结束：同步树上的状态徽标与会话徽标计数
           const cid = useConversationStore().currentId
-          const node = (this.sessionsByCid[cid] || []).find((s) => s.session_id === this.session.session_id)
+          const node = (this.sessionsByCid[cid] || []).find((s) => s.session_id === sessionId)
           if (node) {
             node.status = 'completed'
-            node.total_score = res.data.score
-            node.round_count = res.data.total_rounds
+            node.total_score = result.score
+            node.round_count = result.total_rounds
           }
           useConversationStore().loadList().catch(() => {})
         }
+        if (result.warnings?.length) {
+          // 未评分/轮次上限这类降级必须让用户看到，否则"没打分"会被当成"打了 0 分"
+          ElMessage({ type: 'warning', message: result.warnings.join('；'), duration: 6000 })
+        }
+      } catch (err) {
+        // 回滚占位并把回答还给输入框：重试一次就行，不用重打一遍
+        if (this.session?.session_id === sessionId) {
+          this.rounds.splice(at, 1)
+          this.answerText = text
+        }
+        throw new Error(`${err?.message || '评价生成失败'}，请重试一次`)
       } finally {
         this.answering = false
+        this.liveStage = ''
       }
     },
 

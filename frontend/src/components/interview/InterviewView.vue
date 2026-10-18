@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { exportApi, notifyError } from '../../api'
 import { downloadMarkdown } from '../../utils/clipboard'
@@ -14,6 +14,31 @@ const interview = useInterviewStore()
 const conv = useConversationStore()
 const analysis = useAnalysisStore()
 const exportingId = ref('')
+const scrollEl = ref(null)
+
+// 评价是流式到达的，用户不滚就只能看到气泡顶部在长高。
+// 每帧都会换一个新数组，所以这个 getter 每次变化都会走一遍（代价只是一次 scrollTop）。
+watch(
+  () => [
+    interview.rounds.length,
+    interview.rounds[interview.rounds.length - 1]?.evaluation,
+    interview.answering,
+  ],
+  async () => {
+    await nextTick()
+    const el = scrollEl.value
+    if (el) el.scrollTop = el.scrollHeight
+  }
+)
+
+const LIVE_HINT = {
+  evaluating: '面试官正在评估…',
+  question: '评价已生成，正在准备下一题…',
+  summary: '正在整理面试总结…',
+}
+function liveHintText() {
+  return LIVE_HINT[interview.liveStage] || '面试官正在评估…'
+}
 
 const DIRECTION_LABEL = {
   general: '通用方向',
@@ -130,7 +155,7 @@ function msgLabel(m) {
           <span>
             模拟面试 · {{ directionText(interview.direction) }}
             <el-tag size="small" type="warning">进行中</el-tag>
-            <span class="round-hint">第 {{ interview.answeredRounds.length + 1 }} 轮</span>
+            <span class="round-hint">第 {{ interview.doneRounds.length + 1 }} 轮</span>
           </span>
           <el-button size="small" @click="conv.backToConversation()">返回会话</el-button>
         </header>
@@ -139,22 +164,29 @@ function msgLabel(m) {
         <div class="iv-row iv-question">
           <div class="iv-bubble">
             <span class="iv-label">面试官</span>
-            <div class="iv-text" v-loading="interview.answering" element-loading-text="面试官评估中…">
-              {{ interview.currentQuestion || '（暂无题目）' }}
-            </div>
+            <div class="iv-text">{{ interview.currentQuestion || '（暂无题目）' }}</div>
           </div>
         </div>
 
-        <!-- 逐轮评价 -->
-        <div v-for="(r, i) in interview.answeredRounds" :key="`e${i}`" class="iv-row iv-evaluation">
-          <div class="iv-bubble">
-            <span class="iv-label">第 {{ i + 1 }} 轮评价</span>
-            <el-tag size="small" :type="scoreTagType(r.score)">
-              {{ r.score == null ? '未评分' : `${r.score} 分` }}
-            </el-tag>
-            <div class="iv-text">{{ r.evaluation }}</div>
+        <!-- 逐轮：回答 + 评价（提交后立刻成就地回答气泡，评价流式填进同一条） -->
+        <template v-for="(r, i) in interview.answeredRounds" :key="`e${i}`">
+          <div class="iv-row iv-user">
+            <div class="iv-bubble">
+              <span class="iv-label">我 · 第 {{ i + 1 }} 轮</span>
+              <div class="iv-text">{{ r.answer }}</div>
+            </div>
           </div>
-        </div>
+          <div v-if="r.evaluation || r.pending" class="iv-row iv-evaluation">
+            <div class="iv-bubble" :class="{ 'iv-live': r.pending }">
+              <span class="iv-label">第 {{ i + 1 }} 轮评价</span>
+              <span v-if="r.pending && r.score == null" class="iv-live-tag">生成中</span>
+              <el-tag v-else size="small" :type="scoreTagType(r.score)">
+                {{ r.score == null ? '未评分' : `${r.score} 分` }}
+              </el-tag>
+              <div class="iv-text">{{ r.evaluation }}<i v-if="r.pending" class="iv-caret" /></div>
+            </div>
+          </div>
+        </template>
 
         <!-- 回答输入 / 总结 -->
         <div v-if="!interview.summary" class="answer-box">
@@ -162,17 +194,18 @@ function msgLabel(m) {
             v-model="interview.answerText"
             type="textarea"
             :rows="4"
-            placeholder="输入你的回答… 提交后会给出评分与追问"
+            :disabled="interview.answering"
+            placeholder="输入你的回答… 提交后会边生成边展示评价，再给出下一题"
           />
           <div class="answer-actions">
             <el-button
               type="primary"
               size="small"
               :loading="interview.answering"
-              :disabled="!interview.answerText.trim()"
+              :disabled="!interview.answerText.trim() || interview.answering"
               @click="onSubmit"
             >提交回答</el-button>
-            <span v-if="interview.answering" class="hint">正在评估，约需十几秒…</span>
+            <span v-if="interview.answering" class="hint">{{ liveHintText() }}</span>
           </div>
         </div>
 
@@ -269,6 +302,34 @@ function msgLabel(m) {
   color: var(--el-color-warning);
   font-weight: 600;
   margin-right: 6px;
+}
+/* 流式中的评价：虚线边 + 光标，跟"已落库"的实线气泡区分开 */
+.iv-live {
+  border-style: dashed;
+}
+.iv-live-tag {
+  font-size: 11px;
+  color: var(--el-text-color-secondary, #909399);
+  margin-right: 6px;
+}
+.iv-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: currentColor;
+  animation: iv-blink 1s steps(2, start) infinite;
+}
+@keyframes iv-blink {
+  to {
+    visibility: hidden;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .iv-caret {
+    animation: none;
+  }
 }
 .iv-text {
   white-space: pre-wrap;

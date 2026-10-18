@@ -8,11 +8,15 @@
 
 from __future__ import annotations
 
+import contextvars
 import json
+import logging
 import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.core.deps import (
     get_conversation_store_service,
@@ -39,6 +43,8 @@ from app.services.interview_simulation_service import (
 )
 
 router = APIRouter(prefix="/api/v1")
+
+logger = logging.getLogger(__name__)
 
 
 def _read_latest_resume_text(store_service, conversation_id: str) -> str:
@@ -149,24 +155,28 @@ def start_interview(payload: InterviewStartRequest, role: str = Depends(get_curr
     )
 
 
-@router.post("/interview/answer")
-def answer_interview(payload: InterviewAnswerRequest, role: str = Depends(get_current_role)) -> dict:
-    session_id = payload.session_id.strip()
-    answer = payload.answer.strip()
+class _InterviewFlowError(Exception):
+    """接口内的业务错误：由端点捕获后转成统一信封（流式端点则转成 error 事件）。"""
 
-    if not session_id:
-        return fail("session_id 参数不能为空", code=400)
-    if not answer:
-        return fail("answer 参数不能为空", code=400)
+    def __init__(self, message: str, code: int = 400):
+        super().__init__(message)
+        self.message = message
+        self.code = code
 
-    # 事务一：读取会话快照与面试历史（读完即释放）
+
+def _load_answer_context(session_id: str) -> dict:
+    """事务一：读会话快照与面试历史，读完即释放（LLM 调用不能占着连接）。
+
+    抽成独立函数是为了让流式端点复用同一套校验：会话是否存在、是否已结束、
+    当前题目是什么，两边必须完全一致，否则会出现"非流式能答、流式报错"的分裂。
+    """
     session = DatabaseManager.get_session()
     try:
         interview_session = InterviewSessionRepository.get_by_session_id(session, session_id)
         if interview_session is None:
-            return fail("面试会话不存在", code=404)
+            raise _InterviewFlowError("面试会话不存在", 404)
         if interview_session.status == "completed":
-            return fail("面试已结束", code=400)
+            raise _InterviewFlowError("面试已结束", 400)
 
         conversation_id = interview_session.conversation_id
         current_round = interview_session.round_count
@@ -187,26 +197,32 @@ def answer_interview(payload: InterviewAnswerRequest, role: str = Depends(get_cu
         DatabaseManager.remove_session()
 
     if not current_question:
-        return fail("无法找到当前题目", code=500)
+        raise _InterviewFlowError("无法找到当前题目", 500)
 
-    resume_text = _read_latest_resume_text(get_conversation_store_service(), conversation_id)
-    round_number = current_round + 1
+    return {
+        "conversation_id": conversation_id,
+        "current_round": current_round,
+        "current_question": current_question,
+        "history": history,
+        "jd_text": jd_text,
+        "resume_text": _read_latest_resume_text(get_conversation_store_service(), conversation_id),
+    }
 
-    # LLM 评估（不占用数据库事务）
-    try:
-        with request_model_scope(payload.model, role):
-            eval_result = get_interview_simulation_service().evaluate_answer(
-                jd_text=jd_text,
-                resume_text=resume_text or "",
-                history=history,
-                current_question=current_question,
-                user_answer=answer,
-                round_number=round_number,
-            )
-    except ValueError as exc:
-        return fail(str(exc), code=400)
-    eval_result, eval_warnings = normalize_interview_evaluation(eval_result)
 
+def _persist_answer(
+    *,
+    session_id: str,
+    answer: str,
+    question_index: int,
+    round_number: int,
+    eval_result: dict,
+    eval_warnings: list[str],
+) -> dict:
+    """事务二：落库（用户回答 + 评价 + 下一题 + 会话状态）并构造响应 data。
+
+    同样被两个端点共用：轮次上限兜底、status 流转、question_index 推进
+    只有一处实现，就不会出现"流式落库少了 next_question"这类非对称 bug。
+    """
     score = eval_result.get("score")
     evaluation = eval_result.get("evaluation", "")
     next_action = eval_result.get("next_action", "continue")
@@ -218,7 +234,6 @@ def answer_interview(payload: InterviewAnswerRequest, role: str = Depends(get_cu
         next_action = "summary"
         eval_warnings.append(f"已达最大轮数（{MAX_INTERVIEW_ROUNDS}），面试自动结束")
 
-    # 事务二：落库（用户回答 + 评价 + 下一题 + 会话状态）
     now = datetime.now()
     session = DatabaseManager.get_session()
     try:
@@ -281,32 +296,181 @@ def answer_interview(payload: InterviewAnswerRequest, role: str = Depends(get_cu
         DatabaseManager.remove_session()
 
     if next_action == "summary":
-        return ok(
-            {
-                "session_id": session_id,
-                "action": "summary",
-                "evaluation": evaluation,
-                "score": score,
-                "overall_summary": overall_summary or evaluation,
-                "question_index": payload.question_index,
-                "total_rounds": round_number,
-            },
-            message="面试结束",
-            warnings=eval_warnings or None,
-        )
-
-    return ok(
-        {
+        return {
             "session_id": session_id,
-            "action": "continue",
+            "action": "summary",
             "evaluation": evaluation,
             "score": score,
-            "next_question": follow_up or "",
-            "question_index": payload.question_index + 1,
+            "overall_summary": overall_summary or evaluation,
+            "question_index": question_index,
             "total_rounds": round_number,
-        },
-        message="回答已记录",
+        }
+
+    return {
+        "session_id": session_id,
+        "action": "continue",
+        "evaluation": evaluation,
+        "score": score,
+        "next_question": follow_up or "",
+        "question_index": question_index + 1,
+        "total_rounds": round_number,
+    }
+
+
+@router.post("/interview/answer")
+def answer_interview(payload: InterviewAnswerRequest, role: str = Depends(get_current_role)) -> dict:
+    session_id = payload.session_id.strip()
+    answer = payload.answer.strip()
+
+    if not session_id:
+        return fail("session_id 参数不能为空", code=400)
+    if not answer:
+        return fail("answer 参数不能为空", code=400)
+
+    try:
+        ctx = _load_answer_context(session_id)
+    except _InterviewFlowError as exc:
+        return fail(exc.message, code=exc.code)
+
+    round_number = ctx["current_round"] + 1
+
+    # LLM 评估（不占用数据库事务）
+    try:
+        with request_model_scope(payload.model, role):
+            eval_result = get_interview_simulation_service().evaluate_answer(
+                jd_text=ctx["jd_text"],
+                resume_text=ctx["resume_text"] or "",
+                history=ctx["history"],
+                current_question=ctx["current_question"],
+                user_answer=answer,
+                round_number=round_number,
+            )
+    except ValueError as exc:
+        return fail(str(exc), code=400)
+    eval_result, eval_warnings = normalize_interview_evaluation(eval_result)
+
+    data = _persist_answer(
+        session_id=session_id,
+        answer=answer,
+        question_index=payload.question_index,
+        round_number=round_number,
+        eval_result=eval_result,
+        eval_warnings=eval_warnings,
+    )
+    is_summary = data["action"] == "summary"
+    return ok(
+        data,
+        message="面试结束" if is_summary else "回答已记录",
         warnings=eval_warnings or None,
+    )
+
+
+
+def _next_or_none(iterator):
+    try:
+        return next(iterator)
+    except StopIteration:
+        return None
+
+
+@router.post("/interview/answer/stream")
+async def answer_interview_stream(
+    payload: InterviewAnswerRequest, role: str = Depends(get_current_role)
+):
+    """流式作答：评价边生成边下发，题目生成完再补一条。
+
+    事件序列：`evaluation`（覆盖式全文，可多次）→ `score` → `question`（可选）→ `done`。
+
+    与非流式端点共用 `_load_answer_context` / `_persist_answer`，
+    所以校验、轮次上限、落库行为完全一致，区别只在"什么时候让用户看到评价"。
+    参数校验失败发生在流开始**之前**，返回的仍是普通 JSON 信封，前端能直接弹文案。
+    """
+    session_id = payload.session_id.strip()
+    answer = payload.answer.strip()
+
+    if not session_id:
+        return fail("session_id 参数不能为空", code=400)
+    if not answer:
+        return fail("answer 参数不能为空", code=400)
+
+    try:
+        answer_ctx = _load_answer_context(session_id)
+    except _InterviewFlowError as exc:
+        return fail(exc.message, code=exc.code)
+
+    round_number = answer_ctx["current_round"] + 1
+
+    def sse(event: str, data) -> str:
+        return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    async def generate():
+        # 模型作用域必须开在生成器内部：端点在返回 StreamingResponse 后就退出了，
+        # 在外面 with 一下等于没生效。run_in_threadpool 会拷贝当前 context，
+        # 所以每次 LLM 迭代都能读到本次选型。
+        try:
+            with request_model_scope(payload.model, role):
+                iterator = get_interview_simulation_service().stream_evaluate_answer(
+                    jd_text=answer_ctx["jd_text"],
+                    resume_text=answer_ctx["resume_text"] or "",
+                    history=answer_ctx["history"],
+                    current_question=answer_ctx["current_question"],
+                    user_answer=answer,
+                    round_number=round_number,
+                )
+                # 同步生成器必须固定在同一个 context 里驱动：
+                # starlette 的 iterate_in_threadpool 每次 __next__ 都拷贝新 context，
+                # ContextVar 的 token 无法在后续迭代里复位（见 core/model_scope.py）。
+                iter_ctx = contextvars.copy_context()
+                raw_result: dict | None = None
+                while True:
+                    item = await run_in_threadpool(iter_ctx.run, _next_or_none, iterator)
+                    if item is None:
+                        break
+                    kind, data = item
+                    if kind == "delta":
+                        yield sse("evaluation", {"text": data})
+                    else:
+                        raw_result = data
+
+                if raw_result is None:
+                    # 模型一个字都没吐出来（连 error 都没抛），别让前端拿到空评价
+                    yield sse("error", {"message": "评价生成失败，请重试"})
+                    return
+
+                eval_result, eval_warnings = normalize_interview_evaluation(raw_result)
+                yield sse(
+                    "score",
+                    {
+                        "score": eval_result.get("score"),
+                        "action": eval_result.get("next_action", "continue"),
+                    },
+                )
+
+                result = await run_in_threadpool(
+                    _persist_answer,
+                    session_id=session_id,
+                    answer=answer,
+                    question_index=payload.question_index,
+                    round_number=round_number,
+                    eval_result=eval_result,
+                    eval_warnings=eval_warnings,
+                )
+                if result["action"] == "continue" and result.get("next_question"):
+                    yield sse("question", {"question": result["next_question"]})
+                # warnings 要在落库之后再取：_persist_answer 可能追加"已达最大轮数"
+                yield sse("done", {**result, "warnings": eval_warnings or None})
+        except ValueError as exc:
+            # 解析失败时本轮不落库：用户看到的评价只是预览，重试一次即可，
+            # 比把半截 JSON 猜成评价写进面试记录更诚实。
+            yield sse("error", {"message": str(exc)})
+        except Exception as exc:  # noqa: BLE001 - 流内异常只能靠事件回传
+            logger.exception("流式面试作答失败")
+            yield sse("error", {"message": f"服务器内部错误: {exc}"})
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
