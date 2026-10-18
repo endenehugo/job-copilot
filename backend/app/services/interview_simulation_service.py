@@ -95,18 +95,27 @@ class InterviewSimulationService:
         return self._parse_response(content)
 
     def _ensure_start_llm(self) -> ChatTongyi:
-        # 模型随请求走（ContextVar 注入，chat Agent 工具链内同样生效）
+        # 模型随请求走（ContextVar 注入，chat Agent 工具链内同样生效）。
+        # 出题是"给材料 → 出结构化题单"，不需要推理链：关思考后同一 prompt
+        # 从 28.5s 降到 20s 左右（真正的瓶颈是 expected_points 的输出量，见 P1）。
         return build_chat_llm(
             model=current_chat_model(),
             temperature=0.5,
             top_p=0.8,
+            enable_thinking=False,
+            max_tokens=2500,  # 仅兜住长篇跑偏，正常一份题单约 1300 tokens
         )
 
     def _ensure_answer_llm(self) -> ChatTongyi:
+        # 单轮评价：关思考 + 封顶。实测 888 tokens/15.8–19.7s → 159 tokens/3.67s，
+        # 评价长度与评分档位不变；上限 600 是正常输出（约 250 tokens）的两倍余量，
+        # 留太紧会把 JSON 截断成解析失败。
         return build_chat_llm(
             model=current_chat_model(),
             temperature=0.4,
             top_p=0.7,
+            enable_thinking=False,
+            max_tokens=600,
         )
 
     def _invoke_start_llm(self, jd_text: str, resume_text: str) -> str:

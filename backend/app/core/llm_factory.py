@@ -29,6 +29,13 @@ settings.llm_compatible_mode_models 的模型（或降级链上出现这类模�
 同样可用，所以同一条降级链可以在一个客户端内自由跨模型切换。
 老模型继续走 ChatTongyi 原生链路，不动现网已验证的问答/流式路径。
 
+思考模式开关（2026-10-18 新增，见 docs/2026-10-18-模拟面试提速方案.md）：
+qwen3.8 这代模型在兼容模式端点上默认开思考，而"给定材料做结构化判断"类
+调用（面试评价、出题、评分）并不需要推理链——实测同一段 prompt，开思考
+15.8–19.7s / 888 tokens，关思考 3.67s / 159 tokens，输出长度与评分不变。
+因此 build_chat_llm 增加 enable_thinking 参数，按调用方显式关闭；不传则
+沿用服务端默认（老模型本来就没有这个能力，保持原行为）。
+
 线程安全说明：降级切换发生在 lru_cache 返回的共享实例上，并发场景
 下两个请求可能同时触发切换，最坏结果是都切到同一个降级模型（策略
 漂移而非输出错误），可接受；降级本身是低频路径。
@@ -73,6 +80,15 @@ def _is_quota_error(exc: BaseException) -> bool:
     return any(marker in text for marker in _QUOTA_ERROR_MARKERS)
 
 
+def _thinking_supported(model: str) -> bool:
+    """该模型在百炼兼容端点上是否接受 enable_thinking。
+
+    只有 qwen3 系列认这个参数；降级链上还有 deepseek-* / kimi-* / qwen-plus，
+    给它们传未知参数有 400 风险，所以切换模型时要重新判断一次。
+    """
+    return model.startswith("qwen3")
+
+
 def _apply_sampling_fixes(llm: Any, model: str) -> None:
     """按模型改写采样参数（第三方模型的参数限制，见 settings 里的说明）。
 
@@ -82,6 +98,9 @@ def _apply_sampling_fixes(llm: Any, model: str) -> None:
     只对 ChatOpenAI 生效：ChatTongyi 根本没有 temperature 字段（pydantic
     默认忽略未知入参，所以调用方传的 temperature 在原生链路上是空转），
     而受这些限制的第三方模型只会走兼容模式。
+
+    enable_thinking 同样按模型重算：调用方要关思考时写进 extra_body，
+    切到不支持该参数的模型时撤掉，避免降级后直接 400。
     """
     if not isinstance(llm, ChatOpenAI):
         return
@@ -94,6 +113,9 @@ def _apply_sampling_fixes(llm: Any, model: str) -> None:
     if model in set(settings.llm_models_without_top_p):
         # ChatOpenAI 的 _default_params 会把 None 值整项剔除，所以置 None 即不下传。
         llm.top_p = None
+    thinking = getattr(llm, "base_enable_thinking", None)
+    if thinking is not None:
+        llm.extra_body = {"enable_thinking": thinking} if _thinking_supported(model) else None
 
 
 class QuotaFallbackMixin:
@@ -201,6 +223,10 @@ class CompatibleFallbackChatModel(QuotaFallbackMixin, ChatOpenAI):
     # 再切回普通模型时需要还原，否则温度被上一个模型的约束污染。
     base_temperature: Optional[float] = None
 
+    # 调用方要求的思考开关（None = 不下传，沿用服务端默认）。切换模型时
+    # 由 _apply_sampling_fixes 按目标模型是否支持重新写进 extra_body。
+    base_enable_thinking: Optional[bool] = None
+
 
 def _resolve_timeout(streaming: bool, timeout: int | None) -> int:
     if timeout is not None:
@@ -231,6 +257,8 @@ def build_chat_llm(
     streaming: bool = False,
     timeout: int | None = None,
     max_retries: int | None = None,
+    enable_thinking: bool | None = None,
+    max_tokens: int | None = None,
 ) -> ChatTongyi:
     """构造（或复用）一个带降级链的 LLM 客户端。
 
@@ -246,6 +274,12 @@ def build_chat_llm(
         streaming: 是否主要用于流式调用，决定默认超时档位
         timeout: 单次请求超时秒数；None 时按 streaming 取配置值
         max_retries: 失败重试次数；None 时取 settings.llm_max_retries
+        enable_thinking: 是否让模型先输出思考过程；None 沿用服务端默认。
+            结构化判断类调用（面试评价/出题、评分、校验）建议传 False：
+            实测同一 prompt 从 15.8–19.7s 降到 3.67s，且方差大幅收敛。
+            仅对 qwen3 系模型生效，老模型与原生链路忽略。
+        max_tokens: 输出 token 上限；None 不限制。用于兜住偶发的长篇输出，
+            设值时要留足余量，截断会导致 JSON 解析失败。
     """
     fallbacks = [m for m in settings.llm_fallback_models if m != model]
     resolved_timeout = _resolve_timeout(streaming, timeout)
@@ -258,6 +292,10 @@ def build_chat_llm(
         # 放进链上也只会在切换时 400（url error 不在额度错误标记里，不会继续降级）。
         fallbacks = [m for m in fallbacks if not _needs_compatible_mode(m)]
 
+    if enable_thinking is not None and not _needs_compatible_mode(model):
+        # 原生链路不认这个参数，静默忽略即可——老模型本来也不产生思考内容。
+        logger.info("模型 %s 走原生链路，忽略 enable_thinking=%s", model, enable_thinking)
+
     kwargs: dict = {
         "model": model,
         "temperature": temperature,
@@ -267,6 +305,10 @@ def build_chat_llm(
     }
     if top_p is not None:
         kwargs["top_p"] = top_p
+    if max_tokens is not None:
+        # 两条链路都认 max_tokens：ChatOpenAI 是显式字段，
+        # ChatTongyi 则经 model_kwargs 透传给 dashscope.Generation.call
+        kwargs["max_tokens"] = max_tokens
 
     if _needs_compatible_mode(model):
         # 兼容模式对老模型同样可用，所以链上混排新老模型都不会切换失败。
@@ -275,11 +317,16 @@ def build_chat_llm(
             base_url=settings.llm_compatible_base_url,
             timeout=resolved_timeout,
             base_temperature=temperature,
+            base_enable_thinking=enable_thinking,
             **kwargs,
         )
     else:
+        native_kwargs = {"request_timeout": resolved_timeout}
+        kwargs.pop("max_tokens", None)  # 原生链路统一放 model_kwargs
+        if max_tokens is not None:
+            native_kwargs["max_tokens"] = max_tokens
         llm = FallbackChatModel(
-            model_kwargs={"request_timeout": resolved_timeout},
+            model_kwargs=native_kwargs,
             **kwargs,
         )
     # 采样参数按模型修正（例如 kimi-k3 只接受 temperature=1 且不支持 top_p）

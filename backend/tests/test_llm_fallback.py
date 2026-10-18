@@ -245,3 +245,55 @@ class TestCompatibleModeRouting:
         assert defaults.llm_small_model in defaults.llm_selectable_models
         assert set(defaults.llm_fallback_models) <= set(defaults.llm_selectable_models)
         assert len(set(defaults.llm_fallback_models)) == len(defaults.llm_fallback_models)
+
+
+class TestThinkingSwitch:
+    """思考开关：结构化判断类调用要能显式关掉，且降级到不认识该参数的模型时不能 400。
+
+    实测同一段面试评价 prompt：开思考 15.8–19.7s / 888 tokens，关思考 3.67s / 159 tokens，
+    评价长度与评分档位不变（见 docs/2026-10-18-模拟面试提速方案.md）。
+    """
+
+    @pytest.fixture(autouse=True)
+    def _fake_api_key(self, monkeypatch):
+        monkeypatch.setattr(settings, "dashscope_api_key", "sk-test", raising=False)
+
+    def test_thinking_off_goes_into_extra_body(self):
+        llm = build_chat_llm("qwen3.8-flash", enable_thinking=False)
+        assert llm.extra_body == {"enable_thinking": False}
+
+    def test_thinking_unset_keeps_server_default(self):
+        llm = build_chat_llm("qwen3.8-flash")
+        assert llm.extra_body is None
+
+    def test_thinking_is_part_of_cache_key(self):
+        """lru_cache 必须区分开关：否则先建的无思考客户端会被后一次复用，开关静默失效。"""
+        off = build_chat_llm("qwen3.8-flash", enable_thinking=False)
+        on = build_chat_llm("qwen3.8-flash")
+        assert off is not on
+        assert off.extra_body == {"enable_thinking": False}
+        assert on.extra_body is None
+
+    def test_fallback_drops_unsupported_thinking_param(self):
+        """降级链上有 deepseek/kimi/qwen-plus，给它们传 enable_thinking 有 400 风险。"""
+        llm = build_chat_llm("qwen3.8-flash", enable_thinking=False)
+        llm._switch_to("qwen-plus")
+        assert llm.extra_body is None
+        llm._switch_to("qwen3.8-flash")
+        assert llm.extra_body == {"enable_thinking": False}
+
+    def test_max_tokens_on_compatible_client(self):
+        llm = build_chat_llm("qwen3.8-flash", max_tokens=600)
+        assert llm.max_tokens == 600
+
+    def test_max_tokens_on_native_client_goes_to_model_kwargs(self):
+        # ChatTongyi 没有 max_tokens 字段，只能经 model_kwargs 透传给 dashscope
+        llm = build_chat_llm("qwen-plus", max_tokens=600)
+        assert llm.model_kwargs["max_tokens"] == 600
+        assert llm.model_kwargs["request_timeout"] == settings.llm_request_timeout
+
+    def test_native_client_ignores_thinking(self):
+        # 原生链路不认这个参数，忽略即可，不能因此构造失败
+        llm = build_chat_llm("qwen-plus", enable_thinking=False)
+        assert isinstance(llm, FallbackChatModel)
+        assert not hasattr(llm, "extra_body")
