@@ -7,8 +7,9 @@ import AppIcon from '../shell/AppIcon.vue'
 import StartInterviewForm from './StartInterviewForm.vue'
 import StartAnalysisForm from '../analysis/StartAnalysisForm.vue'
 import StartRewriteForm from '../rewrite/StartRewriteForm.vue'
+import StartGenerateForm from '../resume/StartGenerateForm.vue'
 
-// 统一发起入口：面试 / JD 分析 / 项目优化。
+// 统一发起入口：面试 / JD 分析 / 项目优化 / 生成简历。
 // 状态存于 startDialog 单例（utils/startDialog.js），空态卡片与 Composer 共用。
 // 标签页不用 el-tabs：默认的整宽下划线 + 小字号在弹窗里显得像后台表单，
 // 改成同色系分段控件（浅灰底 + 白色激活块），边框更轻、点击区域更大。
@@ -16,6 +17,7 @@ const TABS = [
   { name: 'interview', label: '模拟面试', icon: 'target' },
   { name: 'analysis', label: 'JD 分析', icon: 'chart' },
   { name: 'rewrite', label: '项目优化', icon: 'pen' },
+  { name: 'resume', label: '生成简历', icon: 'file' },
 ]
 
 const analysis = useAnalysisStore()
@@ -62,5 +64,6 @@ function onStarted() {
     <StartInterviewForm v-show="startDialog.tab === 'interview'" @started="onStarted" />
     <StartAnalysisForm v-show="startDialog.tab === 'analysis'" @started="onStarted" />
     <StartRewriteForm v-show="startDialog.tab === 'rewrite'" @started="onStarted" />
+    <StartGenerateForm v-show="startDialog.tab === 'resume'" @started="onStarted" />
   </el-dialog>
 </template>

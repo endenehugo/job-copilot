@@ -5,6 +5,7 @@ import { useChatStore } from '../stores/chat'
 import { useConversationStore } from '../stores/conversation'
 import { useInterviewStore } from '../stores/interview'
 import { useResumeStore } from '../stores/resume'
+import { useResumeGenStore } from '../stores/resumeGen'
 import { useAuthStore } from '../stores/auth'
 import { useModelStore } from '../stores/model'
 
@@ -21,12 +22,14 @@ import ModelSelector from '../components/topbar/ModelSelector.vue'
 import InterviewView from '../components/interview/InterviewView.vue'
 import AnalysisResultView from '../components/analysis/AnalysisResultView.vue'
 import RewriteResultView from '../components/rewrite/RewriteResultView.vue'
+import ResumeGenerateView from '../components/resume/ResumeGenerateView.vue'
 import StartWorkDialog from '../components/interview/StartWorkDialog.vue'
 
 const conv = useConversationStore()
 const chat = useChatStore()
 const interview = useInterviewStore()
 const resume = useResumeStore()
+const resumeGen = useResumeGenStore()
 const auth = useAuthStore()
 const modelStore = useModelStore()
 
@@ -72,6 +75,9 @@ watch(
   (cid) => {
     chat.stopStreaming() // 旧会话的流式回答不再接收，避免后台空跑
     resume.load(cid)
+    // 简历结果已落库，跨会话时会按 activeNodeId 重新拉取；
+    // 这里只清"上一个会话的预览"，不能无条件清（会误伤刚打开的节点）。
+    resumeGen.resetIfOtherConversation(cid)
     mobileOpen.value = false
   }
 )
@@ -136,10 +142,11 @@ onBeforeUnmount(() => {
       </header>
 
       <div class="main-area">
-        <!-- 子节点视图：面试 / JD 分析 / 项目优化 -->
+        <!-- 子节点视图：面试 / JD 分析 / 项目优化 / 简历生成 -->
         <InterviewView v-if="conv.activeType === 'interview'" />
         <AnalysisResultView v-else-if="conv.activeType === 'analysis'" />
         <RewriteResultView v-else-if="conv.activeType === 'rewrite'" />
+        <ResumeGenerateView v-else-if="conv.activeType === 'resume'" />
 
         <!-- 聊天视图：空态与对话态共用同一个 Composer 实例 -->
         <div v-else class="thread" :class="{ 'thread--empty': !chat.messages.length }">

@@ -6,12 +6,14 @@ import { useConversationStore } from '../../stores/conversation'
 import { useInterviewStore } from '../../stores/interview'
 import { useAnalysisStore } from '../../stores/analysis'
 import { useRewriteStore } from '../../stores/rewrite'
+import { useResumeGenStore } from '../../stores/resumeGen'
 import AppIcon from '../shell/AppIcon.vue'
 
 const store = useConversationStore()
 const interview = useInterviewStore()
 const analysis = useAnalysisStore()
 const rewrite = useRewriteStore()
+const resumeGen = useResumeGenStore()
 const menu = reactive({ visible: false, x: 0, y: 0, cid: '' })
 
 // 分组展开状态持久化：{cid: {iv, an, rw}}
@@ -28,11 +30,12 @@ const DIRECTION_LABEL = {
   agent_ai: 'Agent / AI 应用',
 }
 
-// 三类子节点的统一描述：分组标题、懒加载、子项渲染
+// 四类子节点的统一描述：分组标题、懒加载、子项渲染
 const GROUPS = [
   { key: 'iv', icon: 'target', label: '面试' },
   { key: 'an', icon: 'chart', label: 'JD 分析' },
   { key: 'rw', icon: 'pen', label: '项目优化' },
+  { key: 'rg', icon: 'file', label: '简历' },
 ]
 
 function groupState(cid) {
@@ -45,7 +48,8 @@ function groupState(cid) {
 function groupCount(c, key) {
   if (key === 'iv') return c.interview_count || 0
   if (key === 'an') return c.analysis_count || 0
-  return c.rewrite_count || 0
+  if (key === 'rw') return c.rewrite_count || 0
+  return c.resume_count || 0
 }
 
 function totalCount(c) {
@@ -60,7 +64,8 @@ function isExpanded(c) {
 function loadGroup(cid, key) {
   if (key === 'iv') interview.loadSessions(cid)
   else if (key === 'an') analysis.loadList(cid)
-  else rewrite.loadList(cid)
+  else if (key === 'rw') rewrite.loadList(cid)
+  else resumeGen.loadList(cid)
 }
 
 function onToggleGroup(c, key) {
@@ -140,6 +145,13 @@ async function onOpenRewrite(c, node) {
   } catch (err) {
     notifyError(err)
   }
+}
+
+// 简历不再走 openNode 那种"先灌 store 再切视图"的路子：
+// 预览由 activeNodeId 驱动，主区自己按 id 拉详情（刷新后也能复原）。
+function onOpenResume(c, node) {
+  if (store.activeType === 'resume' && store.activeNodeId === node.generation_id) return
+  store.selectNode('resume', c.conversation_id, node.generation_id)
 }
 
 async function confirmDelete(title, message) {
@@ -329,7 +341,7 @@ function fmtShort(ts) {
               </template>
 
               <!-- 项目优化 -->
-              <template v-else>
+              <template v-else-if="g.key === 'rw'">
                 <div v-if="rewrite.loadingList[c.conversation_id]" class="conv-hint">加载中…</div>
                 <template v-else>
                   <div
@@ -348,6 +360,31 @@ function fmtShort(ts) {
                     </span>
                   </div>
                   <div v-if="!rewrite.listOf(c.conversation_id).length" class="conv-hint">暂无记录</div>
+                </template>
+              </template>
+
+              <!-- 简历：同一会话可有多个版本，按版本号倒序 -->
+              <template v-else>
+                <div v-if="resumeGen.loadingLists[c.conversation_id]" class="conv-hint">加载中…</div>
+                <template v-else>
+                  <div
+                    v-for="r in resumeGen.listOf(c.conversation_id)"
+                    :key="r.generation_id"
+                    class="conv-child"
+                    :class="{ active: store.activeType === 'resume' && store.activeNodeId === r.generation_id }"
+                    @click="onOpenResume(c, r)"
+                  >
+                    <span class="conv-child-title">
+                      {{ r.target_role || '简历' }} · 第 {{ r.version }} 版
+                    </span>
+                    <span class="conv-child-meta">
+                      <span v-if="r.warnings_count || r.missing_count" class="conv-score">
+                        {{ r.warnings_count + r.missing_count }} 处待核对
+                      </span>
+                      <span class="conv-time">{{ fmtShort(r.created_at) }}</span>
+                    </span>
+                  </div>
+                  <div v-if="!resumeGen.listOf(c.conversation_id).length" class="conv-hint">暂无记录</div>
                 </template>
               </template>
             </template>

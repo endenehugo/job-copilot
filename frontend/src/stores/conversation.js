@@ -9,7 +9,8 @@ export const useConversationStore = defineStore('conversation', {
     loading: false,
     // select 请求序号：快速点 A→B 时丢弃 A 的过期响应，避免"高亮 B、内容 A"
     selectSeq: 0,
-    // 主区当前激活的节点类型：conversation=聊天视图，interview=面试视图
+    // 主区当前激活的节点类型：conversation=聊天视图，interview=面试视图，
+    // analysis=JD 分析，rewrite=项目优化，resume=简历生成预览
     // activeNodeId 在 interview 类型下是面试场次 session_id
     activeType: 'conversation',
     activeNodeId: '',
@@ -70,6 +71,22 @@ export const useConversationStore = defineStore('conversation', {
     },
     async refreshDetail() {
       if (this.currentId) await this.select(this.currentId)
+    },
+    // 只重拉消息与文档，不改变当前视图。
+    // 生成简历这类"后台往会话里写了消息"的动作要用它——refreshDetail 会顺带
+    // 把 activeType 切回 conversation，正在看简历预览时会把用户弹走。
+    async refreshMessages() {
+      const cid = this.currentId
+      if (!cid) return null
+      try {
+        const res = await conversationApi.detail(cid)
+        if (this.currentId !== cid) return null // 期间已切换到别的会话，丢弃这次结果
+        this.detail = res.data
+        return res.data
+      } catch {
+        // 消息刷新失败不影响预览本身，静默即可
+        return null
+      }
     },
     async remove(cid) {
       await conversationApi.remove(cid)

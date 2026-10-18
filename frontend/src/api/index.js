@@ -42,6 +42,15 @@ export const jobApi = {
 }
 
 export const resumeApi = {
+  // 自动生成简历：一次 LLM 抽取 + 模板渲染，实测 15–20s，走长超时客户端
+  generate: (data) => longClient.post('/resume/generate', data),
+  // 生成结果的版本线（新表 resume_generations，与上传简历打分的 versions 是两回事）
+  generations: (conversationId) =>
+    client.get('/resume/generations', { params: { conversation_id: conversationId } }),
+  generationDetail: (generationId) => client.get(`/resume/generations/${generationId}`),
+  // 补字段重渲染：0 次 LLM，约 20ms，走普通客户端
+  regenerate: (generationId, data) =>
+    client.post(`/resume/generations/${generationId}/regenerate`, data),
   rewrite: (data) => longClient.post('/resume/project/rewrite', data),
   rewrites: (conversationId) =>
     client.get('/resume/project/rewrites', { params: { conversation_id: conversationId } }),

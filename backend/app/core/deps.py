@@ -25,6 +25,7 @@ from app.services.interview_simulation_service import InterviewSimulationService
 from app.services.job_description_service import JobDescriptionService
 from app.services.project_rewrite_service import ProjectRewriteService
 from app.services.resume_scoring_service import ResumeScoringService
+from app.services.resume_generation_service import ResumeGenerationService
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -72,6 +73,12 @@ def get_resume_scoring_service() -> ResumeScoringService:
 @lru_cache
 def get_project_rewrite_service() -> ProjectRewriteService:
     return ProjectRewriteService()
+
+
+@lru_cache
+def get_resume_generation_service() -> ResumeGenerationService:
+    """简历生成服务：无状态，内部按请求读取 skill 规范与模板，可安全单例复用。"""
+    return ResumeGenerationService()
 
 
 @lru_cache

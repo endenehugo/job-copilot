@@ -27,7 +27,13 @@ export const useChatStore = defineStore('chat', {
     loadFromDetail(detail) {
       const cid = useConversationStore().currentId || ''
       const switched = cid !== this.loadedConversationId
-      const messages = (detail?.messages || []).map((m) => ({ role: m.role, content: m.content }))
+      // meta 是消息的结构化载荷（简历卡片等）。这里只挑 role/content 会把卡片信息丢掉，
+      // 消息流就只剩一句"已生成，见下方卡片"却看不到卡片。
+      const messages = (detail?.messages || []).map((m) => ({
+        role: m.role,
+        content: m.content,
+        ...(m.meta ? { meta: m.meta } : {}),
+      }))
       if (switched) {
         this.messages = messages
         this.pendingImages = []

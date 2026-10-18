@@ -4,6 +4,7 @@ import { renderMarkdown } from '../../utils/markdown'
 import { copyText } from '../../utils/clipboard'
 import SourcePanel from './SourcePanel.vue'
 import FileCards from './FileCards.vue'
+import ResumeCard from './ResumeCard.vue'
 import AppIcon from '../shell/AppIcon.vue'
 
 const props = defineProps({ message: { type: Object, required: true } })
@@ -110,6 +111,8 @@ onUnmounted(() => clearTimeout(copyTimer))
       </div>
 
       <FileCards :files="message.files" />
+      <!-- 结构化载荷卡片：目前只有简历，kind 为其它值时忽略，老消息没有 meta 不受影响 -->
+      <ResumeCard v-if="message.meta && message.meta.kind === 'resume'" :meta="message.meta" />
       <SourcePanel :sources="message.sources" :verification="message.verification" />
 
       <div v-if="!message.streaming && message.content" class="msg-actions">

@@ -13,6 +13,7 @@ const NAV = [
   { key: 'interview', icon: 'target', label: '模拟面试', run: () => openStartDialog('interview') },
   { key: 'analysis', icon: 'chart', label: 'JD 分析', run: () => openStartDialog('analysis') },
   { key: 'rewrite', icon: 'pen', label: '项目优化', run: () => openStartDialog('rewrite') },
+  { key: 'resume', icon: 'file', label: '生成简历', run: () => openStartDialog('resume') },
   { key: 'docs', icon: 'folder', label: '资料库', run: () => emit('open-panel', 'docs') },
   { key: 'kb', icon: 'library', label: '知识库', run: () => emit('open-panel', 'kb') },
 ]

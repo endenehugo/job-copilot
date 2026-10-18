@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ data.profile.name or "简历" }} - 简历</title>
+<style>
+  /* 版式参数源自 make-resume/references/default-resume-template.md 的「视觉参数」节：
+     A4 @page 12mm、正文 10pt、分区标题 #2458B8 13pt + 1.5px 蓝线、
+     公司条 #F3F4F6 圆角 6px、.item 禁止跨页拆分。改版式只改这一块。 */
+  @page { size: A4; margin: 12mm; }
+
+  * { box-sizing: border-box; }
+
+  html, body { margin: 0; padding: 0; }
+
+  body {
+    background: #fff;
+    color: #111;
+    font-family: "Microsoft YaHei", "PingFang SC", "Source Han Sans SC", "Hiragino Sans GB", "SimHei", sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.45;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* 屏幕上用 186mm 宽近似 A4 版心，打印时交给 @page，避免双重留白 */
+  .sheet { width: 186mm; margin: 0 auto; padding: 12mm 0 10mm; }
+
+  @media print {
+    .sheet { width: auto; margin: 0; padding: 0; }
+  }
+
+  /* ── 顶部信息区 ─────────────────────────────── */
+  .head { display: flex; align-items: flex-start; gap: 6mm; margin-bottom: 3mm; }
+  .head-main { flex: 1; min-width: 0; }
+  .name { font-size: 24pt; font-weight: 700; line-height: 1.15; margin: 0 0 1.5mm; letter-spacing: 0.5px; }
+  .meta { font-size: 9.5pt; color: #333; }
+  .meta span + span::before { content: " · "; color: #9CA3AF; }
+  .target { font-size: 10pt; color: #2458B8; font-weight: 600; margin-top: 1mm; }
+  .target .label { color: #6B7280; font-weight: 400; }
+  .photo { width: 26mm; height: 36mm; object-fit: cover; border-radius: 2px; flex: none; }
+
+  /* ── 分区 ──────────────────────────────────── */
+  .section { margin-top: 5mm; }
+  .section > h2 {
+    font-size: 13.5pt;
+    color: #2458B8;
+    font-weight: 700;
+    margin: 0 0 2.4mm;
+    padding-bottom: 0.9mm;
+    border-bottom: 1.5px solid #2458B8;
+    letter-spacing: 0.3px;
+  }
+
+  /* ── 经历条目 ───────────────────────────────── */
+  .item { page-break-inside: avoid; break-inside: avoid; margin-bottom: 3.4mm; }
+  .item:last-child { margin-bottom: 0; }
+
+  .bar {
+    display: flex;
+    align-items: baseline;
+    gap: 2mm;
+    background: #F3F4F6;
+    border-radius: 6px;
+    padding: 1.5mm 2.8mm;
+  }
+  .bar-org { font-weight: 700; font-size: 11.5pt; color: #111; }
+  .bar-team { color: #374151; }
+  .bar-time { margin-left: auto; color: #4B5563; font-size: 9.5pt; white-space: nowrap; }
+
+  .title-row { display: flex; align-items: baseline; gap: 2mm; }
+  .title { font-size: 11.5pt; font-weight: 700; color: #2458B8; }
+  .title-time { margin-left: auto; color: #4B5563; font-size: 9.5pt; white-space: nowrap; }
+
+  .stack { color: #4B5563; font-size: 9.5pt; margin: 0.8mm 0 0; }
+  .stack .label { color: #6B7280; }
+
+  ul.bullets { margin: 1.2mm 0 0; padding-left: 4.2mm; }
+  ul.bullets li { margin: 0.9mm 0; }
+  ul.bullets li::marker { color: #2458B8; }
+
+  /* 技能区：分类行，不用标签块，避免占高度。
+     用 grid 而不是 flex：长分类名（如"AI 框架与技术"）在 flex 下会挤压内容列且被裁切 */
+  .skill-line { display: grid; grid-template-columns: 26mm 1fr; gap: 2mm; margin: 1.3mm 0; }
+  .skill-label {
+    font-weight: 700;
+    color: #2458B8;
+  }
+
+  /* ── 待补占位：橙褐色，便于全局搜索替换 ────────── */
+  .pending {
+    color: #B45309;
+    background: #FEF3C7;
+    border-radius: 2px;
+    padding: 0 1px;
+    font-weight: 600;
+  }
+
+  .empty-hint { color: #9CA3AF; font-style: normal; }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+{# 时间区间：缺 start 或 end 时不留孤立的破折号 #}
+{% macro period(start, end) -%}
+{%- if start and end -%}{{ start }} – {{ end }}
+{%- elif end -%}{{ end }}
+{%- elif start -%}{{ start }}
+{%- endif -%}
+{% endmacro %}
+
+  {# ── 头部：姓名 / 联系 / 求职方向 ── #}
+  <header class="head">
+    <div class="head-main">
+      <h1 class="name">{{ data.profile.name_html|safe }}</h1>
+      <div class="meta">
+        {%- for part in head_meta -%}
+          <span>{{ part }}</span>
+        {%- endfor -%}
+      </div>
+      {% if data.profile.target_role %}
+      <div class="target"><span class="label">求职方向：</span>{{ data.profile.target_role }}</div>
+      {% endif %}
+    </div>
+    {% if data.profile.photo %}
+    <img class="photo" src="{{ data.profile.photo }}" alt="">
+    {% endif %}
+  </header>
+
+  {# ── 教育背景 ── #}
+  {% if data.education %}
+  <section class="section">
+    <h2>教育背景</h2>
+    {% for edu in data.education %}
+    <div class="item">
+      <div class="bar">
+        <span class="bar-org">{{ edu.school }}</span>
+        {% if edu.degree or edu.major %}<span class="bar-team">{{ edu.degree }}{% if edu.degree and edu.major %} · {% endif %}{{ edu.major }}</span>{% endif %}
+        <span class="bar-time">{{ period(edu.start, edu.end) }}</span>
+      </div>
+      {% if edu.gpa or edu.awards %}
+      <ul class="bullets">
+        {% if edu.gpa %}<li>{{ edu.gpa }}</li>{% endif %}
+        {% for award in edu.awards %}<li>{{ award }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {# ── 工作经历 ── #}
+  {% if data.works %}
+  <section class="section">
+    <h2>工作经历</h2>
+    {% for work in data.works %}
+    <div class="item">
+      <div class="bar">
+        <span class="bar-org">{{ work.company }}</span>
+        <span class="bar-team">{{ work.role }}</span>
+        <span class="bar-time">{{ period(work.start, work.end) }}</span>
+      </div>
+      {% if work.bullets %}
+      <ul class="bullets">
+        {% for b in work.bullets %}<li>{{ b.html_text|safe }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {# ── 项目经历 ── #}
+  {% if data.projects %}
+  <section class="section">
+    <h2>项目经历</h2>
+    {% for p in data.projects %}
+    <div class="item">
+      <div class="title-row">
+        <span class="title">{{ p.name }}</span>
+        {% if p.role %}<span class="stack">{{ p.role }}</span>{% endif %}
+        <span class="title-time">{{ period(p.start, p.end) }}</span>
+      </div>
+      {% if p.stack %}
+      <div class="stack"><span class="label">技术栈：</span>{{ p.stack|join(" / ") }}</div>
+      {% endif %}
+      {% if p.bullets %}
+      <ul class="bullets">
+        {% for b in p.bullets %}<li>{{ b.html_text|safe }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {# ── 专业技能 ── #}
+  {% if data.skills %}
+  <section class="section">
+    <h2>专业技能</h2>
+    {% for group in data.skills %}
+    <div class="skill-line">
+      <span class="skill-label">{{ group.label }}</span>
+      <span>{{ group.tags|join("、") }}</span>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+</div>
+</body>
+</html>

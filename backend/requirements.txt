@@ -11,6 +11,9 @@ pydantic-settings==2.13.1
 #   所有带 Form/File 的接口（简历上传、截图分析）在应用导入期直接抛 RuntimeError
 python-multipart==0.0.19
 python-dotenv==1.0.1
+# 简历生成的 A4 模板渲染（resume_generation_service）。FastAPI 不强制依赖 jinja2，
+# 不显式锁定的话部署镜像 import 时才会报 ModuleNotFoundError
+jinja2==3.1.6
 
 # 数据库
 SQLAlchemy==2.0.41
