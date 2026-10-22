@@ -154,12 +154,24 @@ def test_decode_token_rejects_garbage_and_forgery():
 def test_allowed_models_isolated_by_role():
     user_models = allowed_models(ROLE_USER)
     admin_models = allowed_models(ROLE_ADMIN)
-    assert user_models == ["qwen3.8-flash", "qwen3.8-omni-flash", "qwen-plus"]
+    assert user_models == [
+        "qwen3.8-flash",
+        "qwen3.8-omni-flash",
+        "qwen3.7-flash",
+        "qwen3.8-2.4t-a95b",
+        "qwen-plus",
+    ]
     assert set(user_models) < set(admin_models)
     assert len(admin_models) == len(settings.llm_selectable_models)
     # 返回副本，改坏不影响全局
     user_models.append("hack")
-    assert allowed_models(ROLE_USER) == ["qwen3.8-flash", "qwen3.8-omni-flash", "qwen-plus"]
+    assert allowed_models(ROLE_USER) == [
+        "qwen3.8-flash",
+        "qwen3.8-omni-flash",
+        "qwen3.7-flash",
+        "qwen3.8-2.4t-a95b",
+        "qwen-plus",
+    ]
 
 
 def test_default_model_by_role():
@@ -264,7 +276,13 @@ def test_me_treats_forged_token_as_user(client):
 def test_models_endpoint_by_role(client):
     user_body = client.get("/api/v1/models").json()
     assert user_body["data"]["role"] == "user"
-    assert user_body["data"]["models"] == ["qwen3.8-flash", "qwen3.8-omni-flash", "qwen-plus"]
+    assert user_body["data"]["models"] == [
+        "qwen3.8-flash",
+        "qwen3.8-omni-flash",
+        "qwen3.7-flash",
+        "qwen3.8-2.4t-a95b",
+        "qwen-plus",
+    ]
     assert user_body["data"]["default"] == "qwen3.8-flash"
 
     admin_body = client.get("/api/v1/models", headers=_headers(create_token("admin"))).json()

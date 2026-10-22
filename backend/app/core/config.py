@@ -34,6 +34,7 @@ SELECTABLE_LLM_MODELS: list[str] = [
     "qwen3.8-flash",  # 0.8 / 2.7   最便宜，适合压缩/校验/重排等高频任务
     "qwen3.8-omni-flash",  # 价格未在 /api/v1/models 返回；全模态，2026-10-22 实测兼容模式可用
     "qwen3.8-2.4t-a95b",  # 12 / 36     超大参数（2.4T 总参 / A95B 激活），纯文本
+    "qwen3.7-flash",  # 2026-10-22 加入：对普通用户开放
     "deepseek-v4.1-flash",  # 1 / 4       第三方（DeepSeek），1M 上下文，性价比高
     "kimi-k3",  # 20 / 100    第三方（Moonshot），深度思考 + 视觉理解
     # 走 ChatTongyi 原生端点的老模型
@@ -52,6 +53,7 @@ COMPATIBLE_MODE_MODELS: list[str] = [
     # 走兼容模式端点正常返回。它也不在 GET /api/v1/models 的返回里，所以不能只凭清单判断可用性。
     "qwen3.8-omni-flash",
     "qwen3.8-2.4t-a95b",
+    "qwen3.7-flash",
     "deepseek-v4.1-flash",
     "kimi-k3",
 ]

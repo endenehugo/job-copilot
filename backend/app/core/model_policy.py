@@ -23,7 +23,13 @@ ROLE_USER = "user"
 ROLE_ADMIN = "admin"
 
 # 普通用户可选清单与默认模型（刻意不放进 Settings：这是产品决策而非环境配置）
-USER_SELECTABLE_MODELS: list[str] = ["qwen3.8-flash", "qwen3.8-omni-flash", "qwen-plus"]
+USER_SELECTABLE_MODELS: list[str] = [
+    "qwen3.8-flash",
+    "qwen3.8-omni-flash",
+    "qwen3.7-flash",
+    "qwen3.8-2.4t-a95b",
+    "qwen-plus",
+]
 USER_DEFAULT_MODEL = "qwen3.8-flash"
 
 
