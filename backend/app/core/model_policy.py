@@ -1,12 +1,18 @@
 """角色模型白名单。
 
-产品约定（2026-10-18）：
-- 普通用户（未登录/登录态无效一律视为普通用户）默认 qwen-flash，可换 qwen-plus；
+产品约定（2026-10-18，2026-10-22 换模型）：
+- 普通用户（未登录/登录态无效一律视为普通用户）默认 qwen3.8-flash，
+  可换 qwen3.8-omni-flash / qwen-plus；
 - 管理员可选 settings.llm_selectable_models 里的全部模型，默认取 settings.llm_model。
 
 白名单在服务端强制校验（resolve_model），不信任前端传参；
 降级链（llm_fallback_models）不受白名单限制——它只在额度类错误时兜底，
-否则普通用户的 qwen-flash 额度耗尽后将直接报错。
+否则普通用户的额度耗尽后将直接报错。
+
+**为什么把 qwen-flash 换掉**：它在 2026-10-22 免费额度耗尽（百炼免费额度按模型
+独立发放、用完即停且不自动切换）。换成 qwen3.8-flash + qwen3.8-omni-flash：
+两个模型各自有独立额度，单价还更低（0.8/2.7 vs 1.2/12）。
+两者都走兼容模式端点，见 config 里的 COMPATIBLE_MODE_MODELS。
 """
 
 from __future__ import annotations
@@ -17,8 +23,8 @@ ROLE_USER = "user"
 ROLE_ADMIN = "admin"
 
 # 普通用户可选清单与默认模型（刻意不放进 Settings：这是产品决策而非环境配置）
-USER_SELECTABLE_MODELS: list[str] = ["qwen-flash", "qwen-plus"]
-USER_DEFAULT_MODEL = "qwen-flash"
+USER_SELECTABLE_MODELS: list[str] = ["qwen3.8-flash", "qwen3.8-omni-flash", "qwen-plus"]
+USER_DEFAULT_MODEL = "qwen3.8-flash"
 
 
 def allowed_models(role: str) -> list[str]:
