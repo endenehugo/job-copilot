@@ -18,6 +18,12 @@ export const useConversationStore = defineStore('conversation', {
   getters: {
     current: (s) => s.conversations.find((c) => c.conversation_id === s.currentId) || null,
     documents: (s) => s.detail?.documents || [],
+    // 当前会话是否只读（演示样本）。服务端按请求身份算好，前端只做展示降级
+    currentReadonly: (s) =>
+      Boolean(
+        s.detail?.readonly ??
+          s.conversations.find((c) => c.conversation_id === s.currentId)?.readonly
+      ),
   },
   actions: {
     async loadList() {
@@ -89,6 +95,8 @@ export const useConversationStore = defineStore('conversation', {
       }
     },
     async remove(cid) {
+      // 只读会话（演示样本）没有删除语义，UI 已隐藏入口，这里是兜底
+      if (this.conversations.find((c) => c.conversation_id === cid)?.readonly) return
       await conversationApi.remove(cid)
       await this.loadList()
       // 删除的是当前会话：清空主区（Workspace 的 watch 会联动清空各模块）
@@ -103,7 +111,7 @@ export const useConversationStore = defineStore('conversation', {
     // 否则两边一旦不一致（比如置顶项的 updated_at 也变了），顺序就会来回跳。
     async togglePin(cid) {
       const target = this.conversations.find((c) => c.conversation_id === cid)
-      if (!target) return null
+      if (!target || target.readonly) return null
       const next = !target.pinned_at
       await conversationApi.pin(cid, next)
       await this.loadList()

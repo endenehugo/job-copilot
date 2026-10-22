@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, reactive, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { notifyError } from '../../api'
 import { useConversationStore } from '../../stores/conversation'
+import { useAuthStore } from '../../stores/auth'
 import { useInterviewStore } from '../../stores/interview'
 import { useAnalysisStore } from '../../stores/analysis'
 import { useRewriteStore } from '../../stores/rewrite'
@@ -10,6 +11,7 @@ import { useResumeGenStore } from '../../stores/resumeGen'
 import AppIcon from '../shell/AppIcon.vue'
 
 const store = useConversationStore()
+const auth = useAuthStore()
 const interview = useInterviewStore()
 const analysis = useAnalysisStore()
 const rewrite = useRewriteStore()
@@ -202,6 +204,9 @@ async function onDeleteRewrite(c, node) {
 }
 
 function onContextMenu(e, cid) {
+  // 只读会话没有可执行的操作，右键也就不该弹菜单（否则点了只会弹错误）
+  const target = store.conversations.find((c) => c.conversation_id === cid)
+  if (target?.readonly) return
   menu.visible = true
   menu.x = e.clientX
   menu.y = e.clientY
@@ -256,6 +261,15 @@ onBeforeUnmount(() => document.removeEventListener('click', closeMenu))
 function fmtShort(ts) {
   return (ts || '').replace('T', ' ').slice(5, 16)
 }
+
+// 管理员视角的归属标签。访客标识是 v_ + 24 位 hex，全显示太长，
+// 取后 6 位足够区分——同一时间只有少数几个访客在用。
+function ownerLabel(key) {
+  if (!key) return '历史'
+  if (key === 'admin') return '我'
+  if (key === 'demo') return '演示'
+  return `访客 ${String(key).slice(-6)}`
+}
 </script>
 
 <template>
@@ -268,6 +282,7 @@ function fmtShort(ts) {
         :class="{
           active: store.activeType === 'conversation' && c.conversation_id === store.currentId,
           pinned: !!c.pinned_at,
+          'has-meta': auth.isAdmin,
         }"
         @click="onSelect(c)"
         @contextmenu.prevent="onContextMenu($event, c.conversation_id)"
@@ -283,16 +298,31 @@ function fmtShort(ts) {
         </button>
         <span v-else class="conv-caret is-blank"></span>
 
-        <span class="conv-title" :title="c.title">{{ c.title }}</span>
-
-        <span v-if="totalCount(c) && !isExpanded(c)" class="conv-badge">{{ totalCount(c) }}</span>
+        <span class="conv-main">
+          <span class="conv-line">
+            <span class="conv-title" :title="c.title">{{ c.title }}</span>
+            <span v-if="c.readonly" class="conv-tag">演示</span>
+            <span v-if="totalCount(c) && !isExpanded(c)" class="conv-badge">{{ totalCount(c) }}</span>
+          </span>
+          <!-- 管理员视角：这条归谁、什么时候建的。访客自己不需要这两行 -->
+          <span v-if="auth.isAdmin" class="conv-meta">
+            <span class="conv-owner">{{ ownerLabel(c.owner_key) }}</span>
+            <span class="conv-time">{{ fmtShort(c.created_at) }}</span>
+          </span>
+        </span>
 
         <!-- 置顶标识放右侧：放标题前会把各行的标题起点推得参差不齐 -->
         <span v-if="c.pinned_at" class="conv-pin" title="已置顶">
           <AppIcon name="pin" :size="13" />
         </span>
 
-        <button class="conv-more" title="更多操作" @click.stop="onMoreClick($event, c.conversation_id)">
+        <!-- 只读会话（演示样本）不给操作入口：置顶与删除都是写操作，点了只会报错 -->
+        <button
+          v-if="!c.readonly"
+          class="conv-more"
+          title="更多操作"
+          @click.stop="onMoreClick($event, c.conversation_id)"
+        >
           <AppIcon name="more" :size="15" />
         </button>
       </div>

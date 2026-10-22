@@ -49,6 +49,19 @@ function docState(doc) {
 
 const canSend = computed(() => Boolean(text.value.trim() || chat.pendingImages.length) && !uploading.value)
 
+// 只读会话（演示样本）：服务端在列表项与详情上按当前身份算好了 readonly，
+// 这里只做展示层降级——真正的拦截在后端，前端挡一道只是为了不让用户白点
+const readonly = computed(() => conv.currentReadonly)
+
+async function startOwn() {
+  try {
+    // 新建并选中：Workspace 的 watch 会跟着清空消息区与各模块状态
+    await conv.create()
+  } catch (err) {
+    notifyError(err)
+  }
+}
+
 function autosize() {
   const el = ta.value
   if (!el) return
@@ -170,7 +183,17 @@ function onTask(tab) {
 
 <template>
   <div class="composer" :class="`composer--${props.variant}`">
-    <div ref="plusWrap" class="composer-shell">
+    <!-- 只读会话换成引导条而不是灰掉的输入框：
+         灰输入框会让人反复尝试，一条"这是演示 + 去哪开始"更省事 -->
+    <div v-if="readonly" class="composer-shell composer-readonly">
+      <div class="readonly-copy">
+        <span class="readonly-title">演示对话 · 只读</span>
+        <span class="readonly-hint">可以翻看完整流程，想自己试请新建一个对话</span>
+      </div>
+      <button class="readonly-cta" @click="startOwn">开始我自己的对话</button>
+    </div>
+
+    <div v-else ref="plusWrap" class="composer-shell">
       <PlusMenu
         v-if="plusOpen"
         @close="plusOpen = false"

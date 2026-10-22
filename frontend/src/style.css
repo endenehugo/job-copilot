@@ -225,6 +225,57 @@ button {
   font-size: 14px;
   color: var(--text-1);
 }
+/* 标题 + 徽标的横向一行；管理员视角下它上面还要压一行归属信息 */
+.conv-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.conv-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+}
+/* 只有管理员看得到这段：谁能看到这条会话、什么时候建的。
+   行高从 34px 抬到 42px，把两行信息塞进去而不挤压点击区。 */
+.conv-row.has-meta {
+  height: 42px;
+}
+.conv-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  line-height: 13px;
+  color: var(--text-3);
+  overflow: hidden;
+  white-space: nowrap;
+}
+.conv-owner {
+  flex: none;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--surface-active);
+  color: var(--text-2);
+}
+.conv-time {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+/* 只读会话的「演示」角标 */
+.conv-tag {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--text-3);
+}
 .conv-caret {
   display: grid;
   place-items: center;
@@ -1024,6 +1075,45 @@ sup.cite-ref {
   display: flex;
   align-items: flex-end;
   gap: 6px;
+}
+/* 只读态（演示会话）：把输入框整块换成一条说明 + 出口 */
+.composer-shell.composer-readonly {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-style: dashed;
+  box-shadow: none;
+}
+.readonly-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.readonly-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+.readonly-hint {
+  font-size: 12px;
+  color: var(--text-3);
+}
+.readonly-cta {
+  flex: none;
+  padding: 7px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 13px;
+  cursor: pointer;
+  transition: opacity 0.12s ease;
+}
+.readonly-cta:hover {
+  opacity: 0.86;
 }
 .composer-icon {
   display: grid;
