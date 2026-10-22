@@ -5,7 +5,6 @@ import { notifyError } from '../../api'
 import { useChatStore } from '../../stores/chat'
 import { useConversationStore } from '../../stores/conversation'
 import { useResumeStore } from '../../stores/resume'
-import { openStartDialog } from '../../utils/startDialog'
 import AppIcon from '../shell/AppIcon.vue'
 import PlusMenu from './PlusMenu.vue'
 
@@ -175,10 +174,6 @@ async function onFilesChange(e) {
     autosize()
   }
 }
-
-function onTask(tab) {
-  openStartDialog(tab)
-}
 </script>
 
 <template>
@@ -200,7 +195,6 @@ function onTask(tab) {
         @pick-image="pickFiles"
         @open-docs="emit('open-panel', 'docs')"
         @open-kb="emit('open-panel', 'kb')"
-        @task="onTask"
       />
 
       <div v-if="chat.pendingImages.length || chat.pendingDocs.length" class="composer-attach">

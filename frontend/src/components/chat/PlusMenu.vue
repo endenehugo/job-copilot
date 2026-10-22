@@ -2,19 +2,15 @@
 import { onBeforeUnmount, onMounted } from 'vue'
 import AppIcon from '../shell/AppIcon.vue'
 
-const emit = defineEmits(['close', 'pick-image', 'open-docs', 'task', 'open-kb'])
+const emit = defineEmits(['close', 'pick-image', 'open-docs', 'open-kb'])
 
-// 菜单只放真实能力：图片/简历上传、三类任务、资料库、知识库。
-// "创作图像 / 网页搜索 / 深度研究"后端没有对应入口，不做。
+// 菜单只放"往输入框里塞东西"的动作：图片/简历上传、资料库、知识库。
+// 三类任务（模拟面试 / JD 分析 / 项目优化）已移到左侧导航，这里不再重复，
+// 否则同一个动作有两个入口，用户还得判断有什么区别。
 const GROUPS = [
   [
     { icon: 'image', title: '添加照片和文件', desc: '图片、PDF / Word 简历均可', act: () => emit('pick-image') },
     { icon: 'folder', title: '从资料库添加', desc: '查看已上传文档与简历版本', act: () => emit('open-docs') },
-  ],
-  [
-    { icon: 'target', title: '模拟面试', desc: '按方向进行多轮追问与评分', act: () => emit('task', 'interview') },
-    { icon: 'chart', title: 'JD 分析', desc: '解析岗位要求并给出匹配评分', act: () => emit('task', 'analysis') },
-    { icon: 'pen', title: '项目优化', desc: '把项目描述改写成简历亮点', act: () => emit('task', 'rewrite') },
   ],
   [{ icon: 'library', title: '知识库', desc: '管理题库与八股条目', act: () => emit('open-kb') }],
 ]
