@@ -25,6 +25,8 @@ const TOOL_NAMES = {
   jd_parser: 'JD 解析',
   resume_score: '简历评分',
   project_rewrite: '项目改写',
+  resume_generate_tool: '生成简历',
+  resume_generate: '生成简历',
   mock_interview: '模拟面试',
   multiply: '数值计算',
   skill: '技能查询',

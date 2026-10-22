@@ -64,6 +64,9 @@ _REFERENCE_SECTIONS = ("页面结构", "视觉参数", "内容规则")
 # 素材上限：简历正文取 12000 字（够一份双页简历），JD 摘要取 3000 字
 _MAX_RESUME_CHARS = 12_000
 _MAX_JD_CHARS = 3_000
+# "没有上传文档"时改用对话口述材料的最低字数：低于这个值只可能是闲聊，
+# 拿它去抽取只会生成一份空简历。
+_MIN_SPEECH_CHARS = 50
 
 _YEAR_PATTERN = re.compile(r"^(19|20)\d{2}$")
 _NUMBER_PATTERN = re.compile(r"\d+(?:\.\d+)?")
@@ -223,11 +226,20 @@ class ResumeGenerationService:
 
     # ── 对外主流程 ───────────────────────────────────────────────
 
-    def generate(self, conversation_id: str, extra_fields: dict | None = None) -> dict:
+    def generate(
+        self,
+        conversation_id: str,
+        extra_fields: dict | None = None,
+        announce: bool = True,
+    ) -> dict:
         """生成简历并落库。返回结构化数据 + HTML 正文 + 审计告警 + 版本信息。
 
+        Args:
+            announce: 是否把结果作为一问一答写进会话。chat 链路的工具调用要传 False——
+                那边的 chat_stream 自己会写消息，两边都写会出现重复的四个气泡。
+
         Raises:
-            ValueError: 会话内没有可用简历文档，或抽取结果无法解析。
+            ValueError: 会话内既没有简历文档、对话里也没有足够口述材料，或抽取结果无法解析。
         """
         started = datetime.now()
         conversation_id = (conversation_id or "").strip()
@@ -271,15 +283,26 @@ class ResumeGenerationService:
             "stages": stages,
             **record,
         }
-        self.announce_in_conversation(result)
+        if announce:
+            self.announce_in_conversation(result)
         return result
 
     # ── 素材收集 ─────────────────────────────────────────────────
 
-    def collect_materials(self, conversation_id: str) -> dict:
+    def collect_materials(self, conversation_id: str, allow_conversation_fallback: bool = True) -> dict:
         """取会话内最新一份已解析简历 + 最新一次 JD 分析。
 
         JD 只作为"投递方向"提供给抽取阶段，不写入简历正文（见模块 docstring 第 3 点）。
+
+        会话内没有可解析文档时，退而使用**用户在对话里说过的话**作为简历原文。
+        原先这里是直接 raise「请先上传简历」，导致"直接在对话里给信息、不上传文件"的用户
+        完全无法生成简历（2026-10-22 HR 试用即卡死在这条路径）。
+        门槛放在 _MIN_SPEECH_CHARS：只有"你好""帮我写份简历"这类闲聊不算素材，
+        否则会拿一句问候去抽取，生成一份空简历。
+
+        Args:
+            allow_conversation_fallback: 是否允许用口述材料兜底。rerender 场景要传 False：
+                它只该基于原文档重算审计，素材没了就沿用上一版告警，不能换成口述文本。
         """
         session = DatabaseManager.get_session()
         try:
@@ -289,16 +312,35 @@ class ResumeGenerationService:
                 d for d in DocumentRepository().list_by_conversation_id(session, conversation_id)
                 if (d.status or "") in ("parsed", "indexed") and d.parsed_text_path
             ]
+
+            jd = JobAnalysisRepository.get_latest_by_conversation_id(session, conversation_id)
+            jd_brief = self._build_jd_brief(jd) if jd is not None else ""
+
             if not documents:
-                raise ValueError("当前会话还没有解析成功的简历，请先上传简历")
+                if not allow_conversation_fallback:
+                    raise ValueError("当前会话还没有解析成功的简历，请先上传简历")
+                spoken = self.collect_user_speech(conversation_id)
+                if len(spoken) < _MIN_SPEECH_CHARS:
+                    raise ValueError(
+                        "当前会话还没有可用的简历材料：请先上传简历，"
+                        "或直接在对话里说明你的经历（学校、公司/实习、项目、技能等）"
+                    )
+                logger.info(
+                    "会话内无可解析文档，改用对话口述材料：conversation_id=%s chars=%d",
+                    conversation_id, len(spoken),
+                )
+                return {
+                    "document_id": "",
+                    "original_name": "对话口述材料",
+                    "resume_text": spoken[:_MAX_RESUME_CHARS],
+                    "jd_brief": jd_brief,
+                    "from_conversation": True,
+                }
 
             latest = documents[-1]
             resume_text = self._read_text(latest.parsed_text_path)
             if not resume_text:
                 raise ValueError("简历解析结果为空，请重新上传")
-
-            jd = JobAnalysisRepository.get_latest_by_conversation_id(session, conversation_id)
-            jd_brief = self._build_jd_brief(jd) if jd is not None else ""
 
             return {
                 "document_id": latest.document_id,
@@ -308,6 +350,30 @@ class ResumeGenerationService:
             }
         finally:
             DatabaseManager.remove_session()
+
+    def collect_user_speech(self, conversation_id: str, limit: int = 12) -> str:
+        """把会话里用户说过的话拼成一段文本，作为"没有上传文档"时的简历素材。
+
+        只取 user 角色：助手消息里全是方法建议、模板说明和"我需要知道你什么"，
+        混进去会被抽取阶段当成候选人的经历。图片 markdown 也要剥掉，只留文字。
+        """
+        try:
+            messages = self._store().get_conversation_messages(conversation_id)
+        except Exception:
+            logger.warning("读取会话消息失败：conversation_id=%s", conversation_id, exc_info=True)
+            return ""
+
+        texts: list[str] = []
+        for item in messages:
+            if (item.get("role") or "") != "user":
+                continue
+            content = (item.get("content") or "").strip()
+            if not content:
+                continue
+            content = re.sub(r"!\[[^\]]*\]\([^)]+\)", "", content).strip()
+            if content:
+                texts.append(content)
+        return "\n\n".join(texts[-limit:])[:_MAX_RESUME_CHARS]
 
     @staticmethod
     def _read_text(path: str) -> str:
@@ -534,7 +600,7 @@ class ResumeGenerationService:
         applied, ignored = apply_extra_fields(data, extra_fields or {})
         materials: dict = {}
         try:
-            materials = self.collect_materials(conversation_id)
+            materials = self.collect_materials(conversation_id, allow_conversation_fallback=False)
             warnings = audit_resume_data(data, materials["resume_text"])
         except ValueError:
             # 文档被删/解析结果丢了：沿用上一版审计结果，用户仍能拿到新一版

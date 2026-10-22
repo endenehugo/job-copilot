@@ -29,6 +29,7 @@ def build_agent_system_prompt() -> str:
         "如果当前会话文档与问题无关，直接说明缺少哪些信息，禁止凭常识「构建」或「推测」用户的项目画像。\n\n"
         "可用工具：\n"
         "- web_search_tool：搜索最新网页信息\n"
+        "- resume_generate_tool：按会话材料生成排版完整的 HTML 简历（结构化抽取 + 模板渲染，推荐）\n"
         "- word_document_tool：生成 Word 文档\n"
         "- html_document_tool：生成并保存 HTML 文件，返回下载链接；内容较长时用 start/append/finish 分块写入\n"
         "- jd_parser_tool：分析职位描述（JD），提取关键词、要求、加分项等\n"
@@ -37,13 +38,23 @@ def build_agent_system_prompt() -> str:
         "- mock_interview_tool：根据 JD 和简历生成面试题\n"
         "- load_skill：加载内置求职技能的完整操作指南\n"
         "用户如果需要分析 JD、评分简历、优化项目或模拟面试，请主动调用对应工具。\n\n"
+        "【简历生成规则·必须执行】用户要求生成或重写简历时：\n"
+        "① 必须先调用 resume_generate_tool。它按固定模板渲染、一次调用完成，"
+        "比手写 HTML 快一个数量级，素材自动取自会话（上传的简历或用户口述）。\n"
+        "② 不要自己预判「信息够不够」——先调工具，工具会返回 missing 清单和 audit_warnings，"
+        "再据此向用户追问。预判会导致用户拿不到任何文件。\n"
+        "③ **只有工具真的返回了 html_url，才能说「已生成/已落盘」并把链接写出来。**"
+        "没有工具返回就声称生成属于编造，用户点开链接是 404，比直接说失败更糟。"
+        "工具报错时如实转述原因和缺少的材料。\n"
+        "④ 不需要先 load_skill 加载 make-resume，那套规范已内置在工具里。\n"
+        "⑤ 只有用户明确要求自定义版式、或要的根本不是简历，才用 html_document_tool。\n"
+        "工具返回的 audit_warnings（数字/技术栈在原文里找不到出处）要如实转述，"
+        "missing 非空时向用户追问，禁止自己补字段。\n\n"
         "【文件交付硬性规则】只要用户要求得到一份文件（简历、报告、页面等），"
-        "必须先调用 word_document_tool 或 html_document_tool 落盘，再把工具返回的下载链接写进回答。"
+        "必须先调用 resume_generate_tool / word_document_tool / html_document_tool 落盘，"
+        "再把工具返回的下载链接写进回答。"
         "严禁把整份 HTML 或长文档源码直接贴到对话里——前端会剥离标签，用户只能看到乱码或空白。"
         "回答里除了链接，只写简短的交付说明。\n\n"
-        "【make-resume 专属规则】调用 load_skill 加载 make-resume 后，"
-        "必须按指南先把模板骨架写全（分块调用 html_document_tool），最后 finish 落盘，"
-        "再给出下载链接与简短说明。不要因为内容长就只输出部分 HTML。\n\n"
         "内置求职技能（ASu-skills）：当用户任务匹配以下技能场景时，"
         "必须先调用 load_skill 加载该技能的完整指南，再严格按指南执行：\n"
         + skill_loader.catalog_prompt().replace("{", "{{").replace("}", "}}")
@@ -59,7 +70,7 @@ from app.services.document_index_service import DocumentIndexService
 from app.services.context_compression_service import ContextCompressionService
 from app.services.context_verification_service import ContextVerificationService
 from app.core.config import settings
-from app.tools import MultiplyTool, WebSearchTool, WordDocumentTool, HtmlDocumentTool, JdParserTool, ResumeScoreTool, ProjectRewriteTool, MockInterviewTool, SkillTool
+from app.tools import MultiplyTool, WebSearchTool, WordDocumentTool, HtmlDocumentTool, JdParserTool, ResumeScoreTool, ProjectRewriteTool, MockInterviewTool, SkillTool, ResumeGenerateTool
 from app.utils import ResourceUtils
 from app.utils import skill_loader
 
@@ -72,6 +83,14 @@ class ConversationChatService:
     context_verification_service: ContextVerificationService = field(default_factory=ContextVerificationService)
 
     _IMAGE_MARKDOWN_PATTERN = re.compile(r"!\[[^\]]*\]\((/conversation/image/[^)\s]+)\)")
+    # 回答里"声称已经产出文件"的几种说法。用于兜住模型不调工具却报告成功的幻觉
+    # （2026-10-22 实测：模型直接回"简历已生成并落盘，下载链接见上方工具返回结果"，
+    # 而那个"上方"什么都没有，用户点开必然 404）。
+    _FILE_CLAIM_PATTERN = re.compile(
+        r"(已|已经)(为你)?(生成|落盘|保存|输出).{0,10}(简历|文件|文档|HTML)"
+        r"|(简历|文件|文档|HTML).{0,10}(已|已经).{0,6}(生成|落盘|保存|交付)"
+        r"|下载链接|点击下载|文件链接"
+    )
     _MAX_HISTORY_MESSAGES = 12  # 历史消息压缩阈值（保留最近 6 轮逐字，更早走增量摘要）
     # 工具轮上限：make-resume 需要 load_skill 取指南 -> 多块 html_document_tool 写入 -> 收尾，
     # 3 轮不够用，模型会在没落盘的情况下被强制收尾（表现就是"生成不出 HTML 文件"）。
@@ -186,6 +205,7 @@ class ConversationChatService:
                 answer = self._get_qa_llm().invoke(prompt_messages).content
 
         answer = answer or self._fallback_answer(tool_warnings)
+        answer = self._guard_fake_artifact_claim(answer, files)
 
         # 4. 上下文验证 + 引用添加（仅在有检索上下文时执行）
         verification_result = None
@@ -291,6 +311,7 @@ class ConversationChatService:
                     yield {"event": "delta", "data": {"text": answer}}
 
         answer = answer or self._fallback_answer(tool_warnings)
+        answer = self._guard_fake_artifact_claim(answer, files)
 
         # 与非流式一致：持久化原始回答（不含引用标记）
         self.conversation_store_service.append_message_pair(conversation_id, user_content, answer, normalized_mode)
@@ -327,6 +348,26 @@ class ConversationChatService:
                 }
             except Exception as exc:
                 logger.warning("上下文验证异常，跳过: %s", exc)
+
+    @classmethod
+    def _guard_fake_artifact_claim(cls, answer: str, files: list[dict]) -> str:
+        """模型声称产出了文件、但实际没有任何产物时，把真实情况补在末尾。
+
+        不去"纠正模型"（不可靠），只保证用户不会被引导去点一个不存在的链接。
+        2026-10-22 实测：模型跳过工具直接回「简历已生成并落盘」，
+        追问后才承认没调工具，用户拿到的只有一段文字。
+        """
+        if files or not answer:
+            return answer
+        if not cls._FILE_CLAIM_PATTERN.search(answer):
+            return answer
+        return (
+            answer
+            + "\n\n---\n\n"
+            "【注意】本轮实际上**没有生成任何可下载的文件**：上面提到的文件并没有落盘，"
+            "链接点开会是 404。请重新发送一次；如果仍然不出文件，"
+            "就把要写的内容（学校、项目、联系方式）一次性说明清楚，我再重新生成。"
+        )
 
     @staticmethod
     def _fallback_answer(warnings: list[str]) -> str:
@@ -476,7 +517,7 @@ class ConversationChatService:
             model=settings.multimodal_model,
             temperature=0.7,
         )
-        self.tools = [MultiplyTool(), WebSearchTool(), WordDocumentTool(), HtmlDocumentTool(), JdParserTool(), ResumeScoreTool(), ProjectRewriteTool(), MockInterviewTool(), SkillTool()]
+        self.tools = [MultiplyTool(), WebSearchTool(), WordDocumentTool(), HtmlDocumentTool(), JdParserTool(), ResumeScoreTool(), ProjectRewriteTool(), MockInterviewTool(), SkillTool(), ResumeGenerateTool()]
         self.tool_dic = {tool.name: tool for tool in self.tools}
 
         self.qa_prompt = ChatPromptTemplate.from_messages([

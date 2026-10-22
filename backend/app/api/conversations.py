@@ -28,7 +28,7 @@ from app.core.deps import (
     get_document_index_service,
 )
 from app.core.model_policy import resolve_model
-from app.core.model_scope import request_model_scope
+from app.core.model_scope import request_conversation_scope, request_model_scope
 from app.core.response import fail, ok
 from app.core.security import get_current_role
 from app.schemas.conversation import ChatRequest, CreateConversationRequest, DeleteConversationRequest
@@ -92,7 +92,7 @@ def conversation_chat(payload: ChatRequest, role: str = Depends(get_current_role
         return fail("query 参数不能为空", code=400)
 
     try:
-        with request_model_scope(payload.model, role):
+        with request_model_scope(payload.model, role), request_conversation_scope(conversation_id):
             result = get_conversation_chat_service().chat(
                 conversation_id, query, payload.mode, image_urls
             )
@@ -135,8 +135,8 @@ def conversation_chat_stream(payload: ChatRequest, role: str = Depends(get_curre
         iterator = get_conversation_chat_service().chat_stream(
             conversation_id, query, payload.mode, image_urls
         )
-        with request_model_scope(selected_model, role):
-            ctx = contextvars.copy_context()  # 必须在 scope 内取，才带上本次模型
+        with request_model_scope(selected_model, role), request_conversation_scope(conversation_id):
+            ctx = contextvars.copy_context()  # 必须在 scope 内取，才带上本次模型与会话
             try:
                 while True:
                     event = await run_in_threadpool(ctx.run, _next_or_none, iterator)

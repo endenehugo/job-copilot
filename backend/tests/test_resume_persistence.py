@@ -312,7 +312,7 @@ def test_generate_persists_and_announces(store, template_ready, monkeypatch):
     monkeypatch.setattr(
         svc,
         "collect_materials",
-        lambda conversation_id: {
+        lambda conversation_id, **kwargs: {
             "document_id": "doc_9",
             "original_name": "简历.txt",
             "resume_text": "主导 RAG 落地，问答准确率 90%+",
@@ -350,7 +350,7 @@ def test_generate_survives_message_write_failure(store, template_ready, monkeypa
     monkeypatch.setattr(
         svc,
         "collect_materials",
-        lambda conversation_id: {
+        lambda conversation_id, **kwargs: {
             "document_id": "doc_9",
             "original_name": "简历.txt",
             "resume_text": "主导 RAG 落地",
@@ -384,7 +384,7 @@ def test_rerender_applies_fields_and_creates_new_version(store, template_ready, 
     )
 
     monkeypatch.setattr(
-        svc, "collect_materials", lambda conversation_id: {"resume_text": "深圳大学 张三"}
+        svc, "collect_materials", lambda conversation_id, **kwargs: {"resume_text": "深圳大学 张三"}
     )
     monkeypatch.setattr(svc, "announce_in_conversation", lambda result: None)
 

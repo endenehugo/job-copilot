@@ -49,3 +49,26 @@ def request_model_scope(requested: str | None, role: str):
 def current_chat_model() -> str:
     """服务层取主模型：请求作用域内返回所选模型，作用域外回落全局默认。"""
     return _current_model.get() or settings.llm_model
+
+
+_current_conversation_id: ContextVar[str] = ContextVar("current_conversation_id", default="")
+
+
+@contextmanager
+def request_conversation_scope(conversation_id: str):
+    """绑定本次请求的会话 ID，供 chat 工具（简历生成等）读取。
+
+    工具是模型在链路内部调用的，conversation_id 既不在工具参数里（模型不知道它），
+    也没法从别处拿到，只能靠 ContextVar 传递。与 request_model_scope 一样，
+    **必须在流式生成器内部开启**，在端点函数里 with 一下是无效的。
+    """
+    token = _current_conversation_id.set(conversation_id or "")
+    try:
+        yield
+    finally:
+        _current_conversation_id.reset(token)
+
+
+def current_conversation_id() -> str:
+    """工具内取当前会话 ID；作用域外返回空串（工具应据此报错而不是猜）。"""
+    return _current_conversation_id.get()
