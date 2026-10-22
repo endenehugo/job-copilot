@@ -30,6 +30,28 @@ router = APIRouter(prefix="/api/v1")
 
 _GENERATION_NOT_FOUND = "简历记录不存在"
 
+# 示例简历的固定提示语：前端用它渲染黄条，避免各处自己写死文案对不上
+_TEMPLATE_NOTE = "示例内容只用于展示版式和写法，不是你自己的经历，不能直接投递"
+
+
+@router.get("/resume/template")
+def get_resume_template() -> dict:
+    """返回一份带示例内容的简历 HTML，供「先看看模板」预览。
+
+    刻意不查会话、不校验 owner：示例里没有任何用户数据，产物也不落库、不落盘、
+    不写会话消息（见 ResumeGenerationService.render_sample_template）。
+    """
+    try:
+        html = get_resume_generation_service().render_sample_template()
+    except ValueError as exc:
+        # 模板文件缺失属于部署问题，对用户说人话，细节留在服务端日志
+        logger.exception("示例简历渲染失败")
+        return fail(f"模板暂不可用：{exc}", code=500)
+    except Exception:
+        logger.exception("示例简历渲染失败")
+        return fail("模板暂不可用，请稍后重试", code=500)
+    return ok({"html": html, "is_template": True, "note": _TEMPLATE_NOTE}, message="模板已加载")
+
 
 def _assert_generation_owner(generation_id: str, owner_key: str, *, writable: bool = False) -> None:
     """第三层授权：generation_id 直取子表，回查会话归属。

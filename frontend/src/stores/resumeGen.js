@@ -15,6 +15,12 @@ export const useResumeGenStore = defineStore('resumeGen', {
     loading: false, // 生成中（LLM，15–20s）
     opening: false, // 打开某一版
     regenerating: false, // 补字段重渲染（0 次 LLM）
+    // 示例模板（「先看看模板」）单独一条状态，绝不塞进 current：
+    // current 是"已落库的某一版"，塞进去后 regenerate() 会拿一个没有 generation_id
+    // 的对象去请求 /resume/generations//regenerate。
+    templateHtml: '',
+    templateNote: '',
+    templateLoading: false,
   }),
   getters: {
     // 保留 result 这个别名：主区视图大量引用 gen.result
@@ -23,6 +29,9 @@ export const useResumeGenStore = defineStore('resumeGen', {
     warnings: (s) => s.current?.warnings || [],
     missing: (s) => s.current?.missing || [],
     hasResult: (s) => !!s.current?.html,
+    // 预览区实际渲染的 HTML：有生成结果优先，否则退到示例模板
+    displayHtml: (s) => s.current?.html || s.templateHtml,
+    showingTemplate: (s) => !s.current?.html && !!s.templateHtml,
     version: (s) => s.current?.version || 0,
     generationId: (s) => s.current?.generation_id || '',
     list: (s) => s.lists[s.conversationId] || [],
@@ -53,6 +62,37 @@ export const useResumeGenStore = defineStore('resumeGen', {
       } finally {
         this.loading = false
       }
+    },
+
+    async loadTemplate() {
+      // 示例只读、可反复拉取（0.2s 级，无 LLM 无落库），失败不弹窗打扰：
+      // 这只影响"看一眼长什么样"的辅助入口。
+      if (this.templateHtml) return this.templateHtml
+      this.templateLoading = true
+      try {
+        const res = await resumeApi.template()
+        this.templateHtml = res.data?.html || ''
+        this.templateNote = res.data?.note || ''
+        return this.templateHtml
+      } catch {
+        return ''
+      } finally {
+        this.templateLoading = false
+      }
+    },
+
+    clearTemplate() {
+      this.templateHtml = ''
+      this.templateNote = ''
+    },
+
+    // 「先看看模板」的完整动作：拉示例 + 清掉当前打开的版本。
+    // 不清 current 的话，预览区的 displayHtml 会优先渲染上一版简历，
+    // 用户点了按钮却看到旧内容，会以为按钮没生效。
+    // current 清掉不影响历史版本：侧栏树照样能点回来。
+    async showTemplate() {
+      await this.loadTemplate()
+      this.current = null
     },
 
     async open(generationId) {
@@ -121,6 +161,8 @@ export const useResumeGenStore = defineStore('resumeGen', {
       this.lists = {}
       this.loadingLists = {}
       this.conversationId = ''
+      this.templateHtml = ''
+      this.templateNote = ''
     },
 
     // 切换会话时清掉"上一份预览"，但不能顺手把新会话刚打开的版本也清掉：

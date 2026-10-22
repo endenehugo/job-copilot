@@ -42,6 +42,8 @@ function onFrameLoad() {
 }
 
 function onPrint() {
+  // 示例态也挡一层：按钮已 disabled，这里防的是键盘/脚本触发
+  if (!gen.hasResult) return
   const win = frame.value?.contentWindow
   if (!win) return
   win.focus()
@@ -49,6 +51,8 @@ function onPrint() {
 }
 
 function onDownload() {
+  // 示例模板不提供下载：带示例内容的 HTML 一旦落到本地，很容易被当成成品直接投递
+  if (!gen.hasResult) return
   const url = gen.result?.html_url
   if (!url) return
   const link = document.createElement('a')
@@ -57,6 +61,10 @@ function onDownload() {
   document.body.appendChild(link)
   link.click()
   link.remove()
+}
+
+async function onShowTemplate() {
+  await gen.showTemplate()
 }
 
 async function onRegenerate() {
@@ -118,9 +126,19 @@ async function onFillSubmit() {
         <span v-else-if="gen.opening" class="time-hint">加载中…</span>
       </span>
       <span class="head-actions">
-        <el-button size="small" :loading="gen.loading" @click="onRegenerate">重新生成一版</el-button>
-        <el-button size="small" :disabled="!gen.hasResult" @click="onDownload">下载 HTML</el-button>
-        <el-button size="small" type="primary" :disabled="!gen.hasResult" @click="onPrint">
+        <!-- 示例态没有"上一版"可重新生成，按钮语义也不成立，直接不显示 -->
+        <el-button
+          v-if="!gen.showingTemplate"
+          size="small"
+          :loading="gen.loading"
+          @click="onRegenerate"
+        >
+          重新生成一版
+        </el-button>
+        <!-- 示例态不给导出入口：一份带示例内容的 HTML 落到本地，
+             很容易被当成成品直接投出去。黄条里已说明原因。 -->
+        <el-button v-if="gen.hasResult" size="small" @click="onDownload">下载 HTML</el-button>
+        <el-button v-if="gen.hasResult" size="small" type="primary" @click="onPrint">
           打印 / 存为 PDF
         </el-button>
         <el-button size="small" text @click="conv.backToConversation()">返回会话</el-button>
@@ -128,6 +146,18 @@ async function onFillSubmit() {
     </header>
 
     <div class="rgen-scroll">
+      <!-- 示例态：黄色警示条必须在最上面，位置比任何正文都靠前 -->
+      <div v-if="gen.showingTemplate" class="notice notice--sample">
+        <div class="notice-title">这是示例简历，不是你自己的经历</div>
+        <div>
+          {{ gen.templateNote || '示例内容只用于展示版式和写法，不能直接投递。' }}
+          正式简历请上传简历文件，或直接在对话里说明你的学校、实习、项目和技能。
+        </div>
+        <div class="notice-actions">
+          <el-button size="small" @click="gen.clearTemplate()">关闭示例</el-button>
+        </div>
+      </div>
+
       <div v-if="warnings.length" class="notice notice--warn">
         <div class="notice-title">以下内容无法在简历原文中找到出处，投递前请逐条核对</div>
         <ul>
@@ -150,13 +180,13 @@ async function onFillSubmit() {
         </el-button>
       </div>
 
-      <div v-if="gen.hasResult" class="paper">
+      <div v-if="gen.displayHtml" class="paper">
         <iframe
           ref="frame"
           class="paper-frame"
           :style="{ height: frameHeight + 'px' }"
-          :srcdoc="gen.html"
-          title="简历预览"
+          :srcdoc="gen.displayHtml"
+          :title="gen.showingTemplate ? '简历模板示例' : '简历预览'"
           @load="onFrameLoad"
         ></iframe>
       </div>
@@ -165,6 +195,15 @@ async function onFillSubmit() {
         <p class="empty-hint">
           从「发起任务 → 生成简历」开始；生成后会基于当前会话里的简历与 JD 分析产出 A4 简历。
         </p>
+        <el-button
+          class="empty-btn"
+          size="small"
+          :loading="gen.templateLoading"
+          @click="onShowTemplate"
+        >
+          先看看模板长什么样
+        </el-button>
+        <p class="empty-hint empty-hint--sub">示例内容仅供参考，不会被当成你的简历保存。</p>
       </div>
     </div>
 
@@ -250,6 +289,16 @@ async function onFillSubmit() {
   border: 1px solid #fcd34d;
   color: #92400e;
 }
+/* 示例态用更重的橙色：它是"别投这份"的阻断提示，不是普通提醒 */
+.notice--sample {
+  background: #fff7ed;
+  border: 1px solid #fb923c;
+  border-left-width: 4px;
+  color: #7c2d12;
+}
+.notice-actions {
+  margin-top: 8px;
+}
 .notice--info {
   background: #f1f5f9;
   border: 1px solid #e2e8f0;
@@ -328,5 +377,12 @@ async function onFillSubmit() {
   font-size: 13px;
   color: var(--text-secondary, #9ca3af);
   margin-top: 8px;
+}
+.empty-btn {
+  margin-top: 16px;
+}
+.empty-hint--sub {
+  margin-top: 10px;
+  font-size: 12px;
 }
 </style>

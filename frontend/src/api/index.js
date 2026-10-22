@@ -49,6 +49,8 @@ export const jobApi = {
 }
 
 export const resumeApi = {
+  // 示例简历：零素材也能看到版式与写法，只读、不落库，走普通客户端
+  template: () => client.get('/resume/template'),
   // 自动生成简历：一次 LLM 抽取 + 模板渲染，实测 15–20s，走长超时客户端
   generate: (data) => longClient.post('/resume/generate', data),
   // 生成结果的版本线（新表 resume_generations，与上传简历打分的 versions 是两回事）

@@ -15,6 +15,16 @@ const major = ref('')
 
 const emit = defineEmits(['started'])
 
+// 「先看看模板」：素材还没准备好时也能看到版式与写法。
+// **不要求会话**：示例是后端的静态渲染，不读会话、不落库，没有会话也能看。
+// 有会话时必须把 currentId 原样传回去——selectNode 只在 cid 变化时才赋值，
+// 传空串会把用户正选中的会话清掉。
+async function onShowTemplate() {
+  await gen.showTemplate()
+  conv.selectNode('resume', conv.currentId || '', '')
+  emit('started') // 父组件只做「关弹窗」，预览同属离开发起弹窗
+}
+
 async function onGenerate() {
   if (!conv.currentId) {
     ElMessage.warning('请先新建或选择一个会话')
@@ -58,8 +68,17 @@ async function onGenerate() {
       >
         {{ gen.loading ? '正在生成…' : '生成简历' }}
       </el-button>
+      <!-- 示例不看会话、不落库，所以不跟 conv.currentId 挂钩。
+           之前这里加了 :disabled="!conv.currentId"，没有会话时按钮是灰的，
+           用户会以为"必须上传简历才能看模板"。 -->
+      <el-button :loading="gen.templateLoading" @click="onShowTemplate">
+        先看看模板示例
+      </el-button>
       <span class="hint">约 15–20 秒，生成后可预览、打印为 PDF 或下载 HTML</span>
     </div>
+    <p class="sample-hint">
+      模板示例用来展示版式和写法，不是你自己的简历，也不会被保存。
+    </p>
   </div>
 </template>
 
@@ -91,6 +110,12 @@ async function onGenerate() {
 }
 .hint {
   font-size: 12px;
+  color: var(--text-secondary, #909399);
+}
+.sample-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.6;
   color: var(--text-secondary, #909399);
 }
 @media (max-width: 560px) {

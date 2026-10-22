@@ -450,6 +450,15 @@ class ResumeGenerationService:
 
     # ── 渲染与落盘 ───────────────────────────────────────────────
 
+    def render_sample_template(self) -> str:
+        """渲染一份带示例内容的简历 HTML，**只用于预览**。
+
+        不走 persist_html / save_generation / announce_in_conversation：示例不落盘、
+        不落库、不写会话消息。否则空壳会固定占掉「第 1 版」，正式简历变成「第 2 版」，
+        对话时间线里还会多出一对"已生成简历"的假气泡。
+        """
+        return self.render_html(normalize_resume_data(build_sample_resume_data()))
+
     def render_html(self, data: dict) -> str:
         """用固定模板渲染自包含 HTML（无外部 CSS/JS/图片依赖）。"""
         template_dir = ResourceUtils.get_resource_path(TEMPLATE_SUBDIR)
@@ -1001,6 +1010,75 @@ def normalize_resume_data(raw: dict) -> dict:
         "projects": projects,
         "skills": skills,
         "missing": missing,
+    }
+
+
+# ── 示例简历（只喂预览层，永远不进产物）────────────────────────────
+
+
+def build_sample_resume_data() -> dict:
+    """一份「看看模板长什么样」用的示例简历。
+
+    **刻意不写任何业绩数字与量化指标。** `audit_resume_data` 在素材为空时第一行就
+    返回空列表，模板态的示例内容完全不受审计约束；一旦这里写了「提升 40%」，用户
+    删字不删数字、或直接截图投递，就变成项目里那两个 P0（编造指标）的复发。
+
+    同理，机构名用「示例大学 / 某互联网公司」而不是真实名称，避免被当成某人的真简历。
+    时间字段保留具体学年，因为它属于结构信息而非业绩承诺，缺了渲染不出区间。
+    """
+    return {
+        "profile": {
+            "name": "陈默",
+            "headline": "2026 届本科 · 计算机科学与技术",
+            "phone": "13800000000",
+            "email": "chen.mo@example.com",
+            "city": "杭州",
+            "target_role": "AI 应用开发实习生",
+            "links": ["github.com/example"],
+        },
+        "education": [
+            {
+                "school": "示例大学",
+                "degree": "本科",
+                "major": "计算机科学与技术",
+                "start": "2022.09",
+                "end": "2026.06",
+                "awards": ["校级奖学金", "程序设计竞赛校赛经历"],
+            }
+        ],
+        "works": [
+            {
+                "company": "某互联网公司",
+                "role": "后端开发实习生",
+                "start": "2025.07",
+                "end": "2025.12",
+                "bullets": [
+                    "参与订单服务的接口开发，使用 FastAPI 编写查询与对账接口，并按现有规范补充单元测试。",
+                    "把各接口里重复的鉴权与日志逻辑抽成公共中间件，减少重复代码和维护成本。",
+                    "配合前端联调，梳理并修复接口返回结构不一致的问题。",
+                ],
+            }
+        ],
+        "projects": [
+            {
+                "name": "智能问答助手",
+                "role": "独立开发",
+                "start": "2025.03",
+                "end": "2025.06",
+                "stack": ["Python", "FastAPI", "LangChain", "FAISS", "Vue 3"],
+                "bullets": [
+                    "负责文档解析、向量化与检索链路的实现，支持上传文档后基于原文回答。",
+                    "引入关键词召回与向量召回的混合检索，并增加重排环节，减少答非所问。",
+                    "前端用流式输出边生成边展示，避免长时间白屏。",
+                ],
+            }
+        ],
+        "skills": [
+            {"label": "语言与框架", "items": ["Python", "FastAPI", "Vue 3"]},
+            {"label": "AI 应用", "items": ["LangChain", "RAG", "FAISS", "Prompt 设计"]},
+            {"label": "工程工具", "items": ["Git", "Docker", "MySQL", "Redis"]},
+        ],
+        "missing": [],
     }
 
 
