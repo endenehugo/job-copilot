@@ -86,10 +86,21 @@ button {
   padding: 0 8px 0 14px;
 }
 .sidebar-head .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   font-size: 15px;
   font-weight: 600;
   letter-spacing: -0.01em;
   white-space: nowrap;
+}
+/* 侧栏品牌 logo：与 15px 文字视觉居中，-1px 抵消拉丁字母的上部留白 */
+.sidebar-head .brand-logo {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  display: block;
+  margin-top: -1px;
 }
 
 .icon-btn {
@@ -757,6 +768,11 @@ sup.cite-ref {
 }
 .msg-tool.is-done {
   color: var(--text-3);
+}
+/* 静默期计时：数字用等宽字形，避免每秒跳动时宽度抖动 */
+.msg-tool-elapsed {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
 }
 .msg-tool-dot {
   width: 6px;

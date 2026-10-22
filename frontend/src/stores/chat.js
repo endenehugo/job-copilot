@@ -149,6 +149,9 @@ export const useChatStore = defineStore('chat', {
         verification: null,
         files: null,
         streaming: true,
+        // 计时起点：工具轮是非流式 invoke，实测静默 60~100s，
+        // 期间没有 delta 可显示，由前端自己算已等待秒数，别让用户以为卡死
+        startedAt: Date.now(),
       })
 
       try {
@@ -210,6 +213,10 @@ export const useChatStore = defineStore('chat', {
             } else if (event.event === 'tool_status') {
               // agent 工具链进度：替换式更新，气泡内显示当前正在执行的工具
               assistantMsg.toolStatus = event.data
+            } else if (event.event === 'thinking') {
+              // 工具轮开始生成工具参数（非流式调用，最长静默 100s）。
+              // 这里先占位，配合 MessageItem 的计时器显示"已等待 Ns"。
+              assistantMsg.toolStatus = { ...event.data, thinking: true }
             } else if (event.event === 'sources') {
               assistantMsg.sources = event.data.sources
             } else if (event.event === 'verification') {

@@ -185,7 +185,7 @@ class ConversationChatService:
             else:
                 answer = self._get_qa_llm().invoke(prompt_messages).content
 
-        answer = answer or "抱歉，我暂时无法生成回答。"
+        answer = answer or self._fallback_answer(tool_warnings)
 
         # 4. 上下文验证 + 引用添加（仅在有检索上下文时执行）
         verification_result = None
@@ -290,7 +290,7 @@ class ConversationChatService:
                 if answer:
                     yield {"event": "delta", "data": {"text": answer}}
 
-        answer = answer or "抱歉，我暂时无法生成回答。"
+        answer = answer or self._fallback_answer(tool_warnings)
 
         # 与非流式一致：持久化原始回答（不含引用标记）
         self.conversation_store_service.append_message_pair(conversation_id, user_content, answer, normalized_mode)
@@ -327,6 +327,29 @@ class ConversationChatService:
                 }
             except Exception as exc:
                 logger.warning("上下文验证异常，跳过: %s", exc)
+
+    @staticmethod
+    def _fallback_answer(warnings: list[str]) -> str:
+        """回答为空时的兜底文案：说清发生了什么 + 下一步做什么。
+
+        原来无论哪种情况都返回「抱歉，我暂时无法生成回答。」，把
+        「模型返回空」「工具轮次耗尽」「工具执行失败」折叠成同一句，
+        用户既不知道原因，也不知道该重试、该拆小需求，还是该换模型。
+        2026-10-22 线上就有 HR 卡在这里。
+        """
+        if warnings:
+            return (
+                "这次没能给出完整回答：工具链没跑完（轮次用尽或工具执行失败）。\n\n"
+                "已经执行的操作没有丢失。建议把要求拆小一点再试——"
+                "比如先只生成简历里的「项目经历」或「技能」一个板块，而不是整份简历；"
+                "内容越大，模型一次生成不完的概率越高。"
+            )
+        return (
+            "这次模型没有返回内容，通常是瞬时故障。\n\n"
+            "直接重试一次即可。如果连续失败，可以换一个模型，"
+            "或把要求写得更具体（岗位、年限、要突出的项目），"
+            "需求越模糊，模型越容易在生成途中空转。"
+        )
 
     def _finalize_without_tools(self, query: str, tool_outputs: list[tuple[str, str]]) -> str:
         """工具轮次用尽后的收尾：不再给工具，让模型基于已有工具结果直接作答。
@@ -375,6 +398,13 @@ class ConversationChatService:
         step = 0
 
         for round_no in range(self._MAX_TOOL_ROUNDS):
+            # 工具轮是非流式 invoke：模型要吐完整工具参数（简历 HTML 十几 KB）才返回，
+            # 实测静默 60~100 秒，期间下游一条事件都发不出来，界面看起来就是卡死。
+            # 先发一条 thinking 让前端至少能显示"第几轮、已等多久"。
+            yield {
+                "event": "thinking",
+                "data": {"round": round_no + 1, "max_rounds": self._MAX_TOOL_ROUNDS},
+            }
             response = self._get_agent_llm().invoke(messages)
             messages.append(response)
             tool_calls = response.tool_calls or []

@@ -69,6 +69,42 @@ onUnmounted(() => {
   if (timer) clearTimeout(timer)
 })
 
+// 工具轮静默计时：非流式 invoke 期间后端没有 delta，
+// 只靠一个转圈图标用户无法判断是慢还是死了，这里把已等待秒数显示出来。
+const elapsed = ref(0)
+let ticker = null
+function startTicker() {
+  clearInterval(ticker)
+  const start = props.message.startedAt || Date.now()
+  elapsed.value = Math.floor((Date.now() - start) / 1000)
+  ticker = setInterval(() => {
+    elapsed.value = Math.floor((Date.now() - start) / 1000)
+  }, 1000)
+}
+function stopTicker() {
+  clearInterval(ticker)
+  ticker = null
+}
+watch(
+  () => props.message.streaming,
+  (streaming) => (streaming ? startTicker() : stopTicker()),
+  { immediate: true }
+)
+onUnmounted(stopTicker)
+
+const toolLabel = computed(() => {
+  const st = props.message.toolStatus
+  if (!st) return ''
+  // thinking：正在让模型生成工具参数（静默期）；tool_status：工具已经在执行
+  if (st.thinking) return `正在生成（第 ${st.round}/${st.max_rounds} 轮）`
+  return `正在调用 ${toolName(st.name)} · 第 ${st.step} 步`
+})
+
+function formatElapsed(seconds) {
+  if (seconds < 60) return `${seconds}s`
+  return `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, '0')}s`
+}
+
 const copied = ref(false)
 let copyTimer = null
 async function onCopy() {
@@ -92,9 +128,11 @@ onUnmounted(() => clearTimeout(copyTimer))
 
     <!-- 助手：无头像、无气泡、整列纯文本 -->
     <div v-else class="msg-assistant">
-      <div v-if="message.toolStatus && message.streaming" class="msg-tool">
+      <div v-if="message.streaming && message.toolStatus" class="msg-tool">
         <span class="msg-tool-dot"></span>
-        正在调用 {{ toolName(message.toolStatus.name) }} · 第 {{ message.toolStatus.step }} 步
+        {{ toolLabel }}
+        <!-- 静默期常见 60~100s，超过 2s 就把秒数亮出来，让用户知道还在跑 -->
+        <span v-if="elapsed > 2" class="msg-tool-elapsed">已 {{ formatElapsed(elapsed) }}</span>
       </div>
       <div v-else-if="message.toolStatus" class="msg-tool is-done">
         已执行 {{ message.toolStatus.step }} 步工具调用
