@@ -44,10 +44,12 @@ class JobDescriptionService:
     def _ensure_llm(self) -> ChatTongyi:
         # 模型随请求走（ContextVar 注入，工具内调用同样生效）；
         # build_chat_llm 有 lru_cache，按模型取客户端近乎零成本，不再实例级固化
+        # 关思考：这是"给材料做结构化判断"，实测 JD 解析 34.3s → 7.3s
         return build_chat_llm(
             model=current_chat_model(),
             temperature=0.3,
             top_p=0.7,
+            enable_thinking=False,
         )
 
     def _invoke_llm(self, jd_text: str) -> str:

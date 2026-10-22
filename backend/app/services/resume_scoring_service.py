@@ -53,10 +53,12 @@ class ResumeScoringService:
 
     def _ensure_llm(self) -> ChatTongyi:
         # 模型随请求走（ContextVar 注入，chat Agent 工具链内同样生效）
+        # 关思考：评分是结构化判断，实测 59.3s → 9.5s
         return build_chat_llm(
             model=current_chat_model(),
             temperature=0.3,
             top_p=0.7,
+            enable_thinking=False,
         )
 
     def _invoke_llm(self, resume_text: str, jd_text: str, jd_analysis: dict | None) -> str:
