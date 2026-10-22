@@ -107,6 +107,26 @@ log "3/5 安装 Nginx 站点"
 NGINX_SRC="$APP_ROOT/deploy/nginx-host.conf"
 if [[ -f "$NGINX_SRC" ]]; then
     install -m 644 "$NGINX_SRC" /etc/nginx/sites-available/job-copilot
+
+    # 站点配置只是三个 server 块的壳，root / 日志 / 全部 location 都在这个共享片段里。
+    # 缺了它 nginx -t 会直接报错（"open() ... job-copilot-server.conf failed"）。
+    SNIPPET_SRC="$APP_ROOT/deploy/nginx-snippet-server.conf"
+    if [[ -f "$SNIPPET_SRC" ]]; then
+        mkdir -p /etc/nginx/snippets
+        install -m 644 "$SNIPPET_SRC" /etc/nginx/snippets/job-copilot-server.conf
+        log "3a 已安装 Nginx 共享片段 job-copilot-server.conf"
+    else
+        warn "未找到 $SNIPPET_SRC —— 站点配置会因缺少 include 而无法加载"
+    fi
+
+    # 该片段里 include 了 ielts-daily-location.conf（另一个项目挂在本站的路径），
+    # 新机器上不存在会导致 nginx -t 失败，先放一个空占位。
+    if [[ ! -f /etc/nginx/snippets/ielts-daily-location.conf ]]; then
+        printf '# 占位空片段：保证 job-copilot-server.conf 里的 include 合法。\n# 部署 ielts-daily 项目后由该项目覆盖本文件。\n' \
+            > /etc/nginx/snippets/ielts-daily-location.conf
+        log "3a 已创建 ielts-daily-location.conf 占位"
+    fi
+
     if [[ "$WEB_PORT" != "8080" ]]; then
         sed -i "s/listen 8080;/listen ${WEB_PORT};/; s/listen \[::\]:8080;/listen [::]:${WEB_PORT};/" \
             /etc/nginx/sites-available/job-copilot
@@ -139,6 +159,7 @@ if [[ -f "$NGINX_SRC" ]]; then
             warn "请移出那个站点（带 .disabled 后缀也会被 * 匹配）后重载"
         fi
         log "Nginx 站点已启用：http://${SERVER_NAME:-<公网IP>}/"
+        log "备案通过后要上 HTTPS：sudo bash deploy/enable-https.sh --domain <域名>"
     else
         warn "nginx -t 未通过，站点已就位但未生效，请检查上面的报错"
     fi
