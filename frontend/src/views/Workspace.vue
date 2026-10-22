@@ -106,7 +106,10 @@ onBeforeUnmount(() => {
   <div class="app-shell" :class="{ 'is-collapsed': collapsed && !narrow }">
     <aside class="sidebar" :class="{ 'is-open': mobileOpen }">
       <div class="sidebar-head">
-        <span class="brand">Job Copilot</span>
+        <span class="brand">
+          <img class="brand-logo" src="/logo.png" alt="" />
+          Job Copilot
+        </span>
         <button class="icon-btn" title="收起侧栏" @click="onToggleSidebar">
           <AppIcon name="panel" :size="17" />
         </button>
