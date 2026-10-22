@@ -221,3 +221,28 @@ def test_nonstream_round_exhaustion_finalizes():
 
     assert result["original_answer"] == "汇总后的回答"
     assert any("汇总生成" in w for w in result["warnings"])
+
+
+def test_file_turn_skips_verification():
+    """产出文件的那一轮跳过上下文校验。
+
+    回答只有"已生成 + 下载链接"，没有可被文档反驳的事实断言，引用标注也无从标起。
+    实测这一跳要再跑一次 LLM（5~33 秒），既烧额度又让 SSE 连接多挂几十秒，
+    而 done 早就发完了，用户只是在等一个永远不会改变正文的回包。
+    """
+    svc = _build_tool_service()
+
+    def fake_rounds(messages, tool_result, effective_query):
+        files = [{"name": "resume.html", "url": "/api/v1/conversation/file/resume.html"}]
+        tool_result["answer"] = "已生成 HTML 简历，下载链接见上方。"
+        tool_result["files"] = files
+        yield {"event": "files", "data": {"files": files}}
+
+    svc._run_tool_rounds = fake_rounds
+
+    events = list(svc.chat_stream("conv_1", "帮我生成简历", "agent", []))
+    names = [e["event"] for e in events]
+
+    assert "done" in names
+    assert "verification" not in names, f"有文件产物时不该再跑校验，实际：{names}"
+    svc.context_verification_service.generate_verification_report.assert_not_called()

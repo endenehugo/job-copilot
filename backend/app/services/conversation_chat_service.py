@@ -208,9 +208,10 @@ class ConversationChatService:
         answer = self._guard_fake_artifact_claim(answer, files)
 
         # 4. 上下文验证 + 引用添加（仅在有检索上下文时执行）
+        #    有文件产物时跳过，理由同 chat_stream：回答里没有可校验的事实断言
         verification_result = None
         cited_answer = answer
-        if context and normalized_mode != "memory":
+        if context and normalized_mode != "memory" and not files:
             try:
                 verify_report = self.context_verification_service.generate_verification_report(
                     answer, context, source_docs
@@ -334,7 +335,10 @@ class ConversationChatService:
             done_data["warnings"] = tool_warnings
         yield {"event": "done", "data": done_data}
 
-        if context and normalized_mode != "memory":
+        # 产出文件的那一轮不做上下文校验：回答只是"已生成 + 下载链接"，
+        # 没有可被文档反驳的事实断言，引用标注也无从标起。实测这一跳要再跑
+        # 一次 LLM（5~33 秒）——纯烧额度，还让 SSE 连接多挂几十秒。
+        if context and normalized_mode != "memory" and not files:
             try:
                 verify_report = self.context_verification_service.generate_verification_report(
                     answer, context, source_docs

@@ -154,6 +154,9 @@ export const useChatStore = defineStore('chat', {
         startedAt: Date.now(),
       })
 
+      // 提到 try 外：finally 里要靠它判断"这条流是不是还是当前那条"
+      let controller = null
+
       try {
         if (!conv.currentId) await conv.create()
 
@@ -170,7 +173,7 @@ export const useChatStore = defineStore('chat', {
         this.pendingDocs = this.pendingDocs.filter((d) => d.status === 'failed')
         this.messages.push(assistantMsg)
 
-        const controller = new AbortController()
+        controller = new AbortController()
         this.streamController = controller
         // 原生 fetch 不走 axios 拦截器，管理员 token 需手动带上，
         // 否则流式端点按普通用户白名单校验模型，管理员的选型会被 400
@@ -234,6 +237,11 @@ export const useChatStore = defineStore('chat', {
                 assistantMsg.warnings = event.data.warnings
               }
               assistantMsg.streaming = false
+              // 回答已经完整下发，后续只有 done 之后的 verification（要再跑一次 LLM，
+              // 实测 5~33 秒）。那只是给已有内容补引用标注，不该继续按住输入框：
+              // 用户在气泡里看到答案后想追问，被锁着几十秒会以为页面卡死。
+              // 解锁只在这里做，finally 里用控制器身份兜住并发场景。
+              this.sending = false
             } else if (event.event === 'error') {
               streamError = event.data.message
             }
@@ -267,8 +275,12 @@ export const useChatStore = defineStore('chat', {
           assistantMsg.content = `**出错了**：${err.message}`
         }
       } finally {
-        this.streamController = null
-        this.sending = false
+        // 只在"当前流仍是自己"时收尾：done 已经提前解锁，用户可能在上一条流
+        // 补引用标注期间就发了新消息，那时 sending 属于新请求，不能被旧流清掉。
+        if (this.streamController === controller) {
+          this.streamController = null
+          this.sending = false
+        }
       }
     },
   },
