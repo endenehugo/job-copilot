@@ -378,7 +378,27 @@ class ConversationStoreService:
             "last_message_preview": item.last_message_preview,
             "created_at": item.created_at.isoformat(),
             "updated_at": item.updated_at.isoformat(),
+            # 前端只关心"有没有置顶"，但要给时间：同一次置顶内的先后顺序由它决定
+            "pinned_at": item.pinned_at.isoformat() if item.pinned_at else None,
         }
+
+    def set_conversation_pinned(self, conversation_id: str, pinned: bool) -> dict:
+        """置顶 / 取消置顶，幂等。"""
+        session = self.database_manager.get_session()
+        try:
+            with session.begin():
+                conversation = self.conversation_repository.get_by_conversation_id(
+                    session, conversation_id
+                )
+                if conversation is None:
+                    raise ValueError("会话不存在")
+                self.conversation_repository.set_pinned(session, conversation, pinned)
+            return {
+                "conversation_id": conversation_id,
+                "pinned_at": conversation.pinned_at.isoformat() if conversation.pinned_at else None,
+            }
+        finally:
+            session.close()
 
     @staticmethod
     def _message_to_dict(item, meta: dict | None = None) -> dict:

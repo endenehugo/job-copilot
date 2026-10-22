@@ -205,6 +205,17 @@ button {
 .conv-row.active {
   background: var(--surface-active);
 }
+/* 置顶行底色加深一档。顺序要紧：pinned 的规则必须排在前面的 hover 之后，
+   否则同权重下 pinned 会把 hover 盖掉；active 放最后，选中仍是最高层级。 */
+.conv-row.pinned {
+  background: var(--surface-pinned);
+}
+.conv-row.pinned:hover {
+  background: var(--surface-hover);
+}
+.conv-row.pinned.active {
+  background: var(--surface-active);
+}
 .conv-title {
   flex: 1;
   min-width: 0;
@@ -248,6 +259,18 @@ button {
   line-height: 17px;
   text-align: center;
   color: var(--text-2);
+}
+/* 置顶标识：常驻显示，否则"为什么它在最上面"没有解释 */
+.conv-pin {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-2);
+}
+.conv-row.active .conv-pin {
+  color: var(--text-1);
 }
 .conv-more {
   flex: none;
@@ -1193,6 +1216,11 @@ sup.cite-ref {
 }
 .context-menu-item.danger:hover {
   background: var(--danger-bg);
+}
+.context-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--line);
 }
 
 .side-drawer .el-drawer__header {

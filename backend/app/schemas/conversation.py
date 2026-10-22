@@ -21,3 +21,9 @@ class ChatRequest(BaseModel):
 
 class DeleteConversationRequest(BaseModel):
     conversation_id: str = ""
+
+
+class PinConversationRequest(BaseModel):
+    conversation_id: str = ""
+    # 默认置顶，取消置顶显式传 false
+    pinned: bool = True

@@ -10,6 +10,9 @@
   --surface-hover: #ececec;
   --surface-active: #e6e6e6;
   --surface-sunken: #f4f4f4;
+  /* 置顶会话行的底色：比普通行深一档，但仍浅于 hover / active，
+     保证"置顶"和"选中"是两个可区分的层级 */
+  --surface-pinned: #f0f0f0;
   --bubble-user: #f4f4f4;
   --text-1: #0d0d0d;
   --text-2: #5d5d5d;

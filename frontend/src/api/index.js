@@ -22,6 +22,8 @@ export const conversationApi = {
   chatStream: (data) => client.post('/conversation/chat/stream', data),
   uploadImage: (formData) => longClient.post('/conversation/image/upload', formData),
   remove: (conversationId) => client.post('/conversation/delete', { conversation_id: conversationId }),
+  pin: (conversationId, pinned) =>
+    client.post('/conversation/pin', { conversation_id: conversationId, pinned }),
 }
 
 export const documentApi = {

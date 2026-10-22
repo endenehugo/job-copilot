@@ -21,6 +21,9 @@ class Conversation(Base):
     summarized_until_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    # 置顶时间；NULL = 未置顶。用时间而不是布尔，留出"按置顶先后排"的余地。
+    # 注意：这是后加的列，create_all 不会给已有表补，靠 mysql_base._ensure_columns 兜底。
+    pinned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
 
 
 class ConversationRepository:
@@ -35,8 +38,32 @@ class ConversationRepository:
         return session.execute(stmt).scalar_one_or_none()
 
     def list_recent(self, session: Session, limit: int = 50) -> list[Conversation]:
-        stmt = select(Conversation).order_by(desc(Conversation.updated_at)).limit(limit)
+        # 排序必须在 SQL 里做：置顶的会话可能很旧，取回 50 条再在内存里排会把它截掉。
+        # pinned_at IS NULL → 0（置顶）在前、1（未置顶）在后；置顶之间按置顶时间倒序。
+        stmt = (
+            select(Conversation)
+            .order_by(
+                Conversation.pinned_at.is_(None),
+                desc(Conversation.pinned_at),
+                desc(Conversation.updated_at),
+            )
+            .limit(limit)
+        )
         return list(session.execute(stmt).scalars())
+
+    def set_pinned(
+        self, session: Session, conversation: Conversation, pinned: bool, now: datetime | None = None
+    ) -> Conversation:
+        """置顶/取消置顶。
+
+        故意不动 updated_at：置顶不是"活跃"，改写它会让取消置顶后位置回不去。
+        重复置顶保留首次时间，保证已置顶项之间的次序稳定。
+        """
+        if not pinned:
+            conversation.pinned_at = None
+        elif conversation.pinned_at is None:
+            conversation.pinned_at = now or datetime.now()
+        return conversation
 
     def update_summary(
         self,

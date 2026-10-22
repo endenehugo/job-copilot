@@ -99,5 +99,15 @@ export const useConversationStore = defineStore('conversation', {
         this.activeNodeId = ''
       }
     },
+    // 置顶/取消置顶。排序完全交给服务端，前端不复制一份比较逻辑——
+    // 否则两边一旦不一致（比如置顶项的 updated_at 也变了），顺序就会来回跳。
+    async togglePin(cid) {
+      const target = this.conversations.find((c) => c.conversation_id === cid)
+      if (!target) return null
+      const next = !target.pinned_at
+      await conversationApi.pin(cid, next)
+      await this.loadList()
+      return next
+    },
   },
 })

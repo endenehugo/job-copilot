@@ -31,7 +31,12 @@ from app.core.model_policy import resolve_model
 from app.core.model_scope import request_conversation_scope, request_model_scope
 from app.core.response import fail, ok
 from app.core.security import get_current_role
-from app.schemas.conversation import ChatRequest, CreateConversationRequest, DeleteConversationRequest
+from app.schemas.conversation import (
+    ChatRequest,
+    CreateConversationRequest,
+    DeleteConversationRequest,
+    PinConversationRequest,
+)
 from app.utils import ResourceUtils
 
 logger = logging.getLogger(__name__)
@@ -158,6 +163,21 @@ def conversation_chat_stream(payload: ChatRequest, role: str = Depends(get_curre
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/conversation/pin")
+def pin_conversation(payload: PinConversationRequest) -> dict:
+    """置顶 / 取消置顶（幂等）。排序由服务端负责，前端拿到后重拉列表即可。"""
+    conversation_id = payload.conversation_id.strip()
+    if not conversation_id:
+        return fail("conversation_id 参数不能为空", code=400)
+    try:
+        result = get_conversation_store_service().set_conversation_pinned(
+            conversation_id, payload.pinned
+        )
+    except ValueError as exc:
+        return fail(str(exc), code=400)
+    return ok(result, message="置顶成功" if payload.pinned else "已取消置顶")
 
 
 @router.post("/conversation/delete")

@@ -221,6 +221,23 @@ function closeMenu() {
   menu.visible = false
 }
 
+function menuPinned() {
+  const target = store.conversations.find((c) => c.conversation_id === menu.cid)
+  return !!target?.pinned_at
+}
+
+async function onTogglePin() {
+  const cid = menu.cid
+  closeMenu()
+  try {
+    const pinned = await store.togglePin(cid)
+    if (pinned === null) return
+    ElMessage.success(pinned ? '已置顶' : '已取消置顶')
+  } catch (err) {
+    notifyError(err)
+  }
+}
+
 async function onDelete() {
   const cid = menu.cid
   closeMenu()
@@ -248,7 +265,10 @@ function fmtShort(ts) {
     <div v-for="c in store.conversations" :key="c.conversation_id" class="conv-node">
       <div
         class="conv-row"
-        :class="{ active: store.activeType === 'conversation' && c.conversation_id === store.currentId }"
+        :class="{
+          active: store.activeType === 'conversation' && c.conversation_id === store.currentId,
+          pinned: !!c.pinned_at,
+        }"
         @click="onSelect(c)"
         @contextmenu.prevent="onContextMenu($event, c.conversation_id)"
       >
@@ -266,6 +286,11 @@ function fmtShort(ts) {
         <span class="conv-title" :title="c.title">{{ c.title }}</span>
 
         <span v-if="totalCount(c) && !isExpanded(c)" class="conv-badge">{{ totalCount(c) }}</span>
+
+        <!-- 置顶标识放右侧：放标题前会把各行的标题起点推得参差不齐 -->
+        <span v-if="c.pinned_at" class="conv-pin" title="已置顶">
+          <AppIcon name="pin" :size="13" />
+        </span>
 
         <button class="conv-more" title="更多操作" @click.stop="onMoreClick($event, c.conversation_id)">
           <AppIcon name="more" :size="15" />
@@ -400,6 +425,11 @@ function fmtShort(ts) {
       @click.stop
       @contextmenu.prevent
     >
+      <div class="context-menu-item" @click="onTogglePin">
+        <AppIcon name="pin" :size="14" />
+        {{ menuPinned() ? '取消置顶' : '置顶对话' }}
+      </div>
+      <div class="context-menu-sep"></div>
       <div class="context-menu-item danger" @click="onDelete">
         <AppIcon name="trash" :size="14" />
         删除对话
