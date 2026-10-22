@@ -11,6 +11,13 @@ from app.core.deps import (
     get_project_rewrite_service,
 )
 from app.core.model_scope import request_model_scope
+from app.core.ownership import (
+    assert_child_owner,
+    assert_conversation_owner,
+    check_owner,
+    get_owner_key,
+    require_writable,
+)
 from app.core.response import fail, ok
 from app.core.security import get_current_role
 from app.repositories import (
@@ -44,7 +51,11 @@ def _rewrite_entity_to_dict(entity) -> dict:
 
 
 @router.post("/resume/project/rewrite")
-def rewrite_project(payload: ProjectRewriteRequest, role: str = Depends(get_current_role)) -> dict:
+def rewrite_project(
+    payload: ProjectRewriteRequest,
+    role: str = Depends(get_current_role),
+    owner_key: str = Depends(get_owner_key),
+) -> dict:
     """优化项目经历描述。
 
     2026-10-13 迁移到会话记录：结果落库 project_rewrites 并返回 rewrite_id，
@@ -59,7 +70,7 @@ def rewrite_project(payload: ProjectRewriteRequest, role: str = Depends(get_curr
         return fail("project_description 参数不能为空", code=400)
 
     store_service = get_conversation_store_service()
-    store_service.ensure_conversation_exists(conversation_id)
+    store_service.ensure_conversation_writable(conversation_id, owner_key=owner_key)
 
     # 收集简历上下文（可选，取前 2000 字帮助更精准的优化）
     context = None
@@ -104,11 +115,15 @@ def rewrite_project(payload: ProjectRewriteRequest, role: str = Depends(get_curr
 
 
 @router.get("/resume/project/rewrites")
-def list_project_rewrites(conversation_id: str = Query(default="")) -> dict:
+def list_project_rewrites(
+    conversation_id: str = Query(default=""), owner_key: str = Depends(get_owner_key)
+) -> dict:
     """会话下的优化历史摘要列表（会话树子节点用）。"""
     conversation_id = conversation_id.strip()
     if not conversation_id:
         return fail("conversation_id 参数不能为空", code=400)
+
+    assert_conversation_owner(conversation_id, owner_key)
 
     session = DatabaseManager.get_session()
     try:
@@ -128,7 +143,9 @@ def list_project_rewrites(conversation_id: str = Query(default="")) -> dict:
 
 
 @router.get("/resume/project/rewrite/detail")
-def project_rewrite_detail(rewrite_id: int = Query(default=0)) -> dict:
+def project_rewrite_detail(
+    rewrite_id: int = Query(default=0), owner_key: str = Depends(get_owner_key)
+) -> dict:
     if rewrite_id <= 0:
         return fail("rewrite_id 参数不能为空", code=400)
 
@@ -137,13 +154,17 @@ def project_rewrite_detail(rewrite_id: int = Query(default=0)) -> dict:
         entity = ProjectRewriteRepository.get_by_id(session, rewrite_id)
         if entity is None:
             return fail("优化记录不存在", code=404)
+        # 第三层：rewrite_id 是自增整数，能顺序猜，回查父会话
+        assert_child_owner(session, entity.conversation_id, owner_key, "优化记录不存在")
         return ok(_rewrite_entity_to_dict(entity))
     finally:
         DatabaseManager.remove_session()
 
 
 @router.post("/resume/project/rewrite/delete")
-def delete_project_rewrite(payload: ProjectRewriteDeleteRequest) -> dict:
+def delete_project_rewrite(
+    payload: ProjectRewriteDeleteRequest, owner_key: str = Depends(get_owner_key)
+) -> dict:
     if payload.rewrite_id <= 0:
         return fail("rewrite_id 参数不能为空", code=400)
 
@@ -153,6 +174,10 @@ def delete_project_rewrite(payload: ProjectRewriteDeleteRequest) -> dict:
             entity = ProjectRewriteRepository.get_by_id(session, payload.rewrite_id)
             if entity is None:
                 return fail("优化记录不存在", code=404)
+            require_writable(
+                assert_child_owner(session, entity.conversation_id, owner_key, "优化记录不存在"),
+                owner_key,
+            )
             ProjectRewriteRepository.delete(session, entity)
     finally:
         DatabaseManager.remove_session()
@@ -182,10 +207,14 @@ def _version_to_dict(v) -> dict:
 
 
 @router.get("/resume/versions/list")
-def list_resume_versions(conversation_id: str = Query(default="")) -> dict:
+def list_resume_versions(
+    conversation_id: str = Query(default=""), owner_key: str = Depends(get_owner_key)
+) -> dict:
     conversation_id = conversation_id.strip()
     if not conversation_id:
         return fail("conversation_id 参数不能为空", code=400)
+
+    assert_conversation_owner(conversation_id, owner_key)
 
     session = DatabaseManager.get_session()
     try:
@@ -196,7 +225,9 @@ def list_resume_versions(conversation_id: str = Query(default="")) -> dict:
 
 
 @router.get("/resume/versions/detail")
-def resume_version_detail(version_id: str = Query(default="")) -> dict:
+def resume_version_detail(
+    version_id: str = Query(default=""), owner_key: str = Depends(get_owner_key)
+) -> dict:
     version_id = version_id.strip()
     if not version_id:
         return fail("version_id 参数不能为空", code=400)
@@ -206,16 +237,22 @@ def resume_version_detail(version_id: str = Query(default="")) -> dict:
         version = ResumeVersionRepository.get_by_version_id(session, version_id)
         if version is None:
             return fail("版本不存在", code=404)
+        # 第三层：version_id 直取，回查父会话
+        assert_child_owner(session, version.conversation_id, owner_key, "版本不存在")
         return ok(_version_to_dict(version))
     finally:
         DatabaseManager.remove_session()
 
 
 @router.get("/resume/versions/compare")
-def compare_resume_versions(conversation_id: str = Query(default="")) -> dict:
+def compare_resume_versions(
+    conversation_id: str = Query(default=""), owner_key: str = Depends(get_owner_key)
+) -> dict:
     conversation_id = conversation_id.strip()
     if not conversation_id:
         return fail("conversation_id 参数不能为空", code=400)
+
+    assert_conversation_owner(conversation_id, owner_key)
 
     session = DatabaseManager.get_session()
     try:

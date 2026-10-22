@@ -9,6 +9,7 @@ from .interview_repository import InterviewSession, InterviewSessionRepository, 
 from .resume_version_repository import ResumeVersion, ResumeVersionRepository
 from .resume_generation_repository import ResumeGeneration, ResumeGenerationRepository
 from .project_rewrite_repository import ProjectRewrite, ProjectRewriteRepository
+from .generated_file_repository import GeneratedFile, GeneratedFileRepository
 
 __all__ = [
     "Base",
@@ -35,4 +36,6 @@ __all__ = [
     "ResumeGenerationRepository",
     "ProjectRewrite",
     "ProjectRewriteRepository",
+    "GeneratedFile",
+    "GeneratedFileRepository",
 ]

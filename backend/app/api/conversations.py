@@ -29,8 +29,20 @@ from app.core.deps import (
 )
 from app.core.model_policy import resolve_model
 from app.core.model_scope import request_conversation_scope, request_model_scope
+from app.core.ownership import (
+    ADMIN_OWNER,
+    assert_conversation_owner,
+    get_owner_key,
+    request_owner_scope,
+    storage_owner_key,
+)
 from app.core.response import fail, ok
 from app.core.security import get_current_role
+from app.services.generated_file_service import (
+    delete_generated_files,
+    lookup_generated_file,
+    unlink_generated_files,
+)
 from app.schemas.conversation import (
     ChatRequest,
     CreateConversationRequest,
@@ -63,30 +75,40 @@ def _next_or_none(iterator):
 
 
 @router.post("/conversation/create")
-def create_conversation(payload: CreateConversationRequest) -> dict:
+def create_conversation(
+    payload: CreateConversationRequest, owner_key: str = Depends(get_owner_key)
+) -> dict:
     conversation = get_conversation_store_service().create_conversation(
-        title=payload.title, mode=payload.mode
+        title=payload.title, mode=payload.mode, owner_key=storage_owner_key(owner_key)
     )
     return ok(conversation, message="创建成功")
 
 
 @router.get("/conversation/list")
-def list_conversations(limit: int = Query(default=50, ge=1, le=500)) -> dict:
-    conversations = get_conversation_store_service().list_conversations(limit=limit)
+def list_conversations(limit: int = Query(default=50, ge=1, le=500), owner_key: str = Depends(get_owner_key)) -> dict:
+    conversations = get_conversation_store_service().list_conversations(
+        limit=limit, owner_key=owner_key
+    )
     return ok({"conversations": conversations}, message="查询成功")
 
 
 @router.get("/conversation/detail")
-def conversation_detail(conversation_id: str = Query(default="")) -> dict:
+def conversation_detail(conversation_id: str = Query(default=""), owner_key: str = Depends(get_owner_key)) -> dict:
     conversation_id = conversation_id.strip()
     if not conversation_id:
         return fail("conversation_id 参数不能为空", code=400)
-    detail = get_conversation_store_service().get_conversation_detail(conversation_id)
+    detail = get_conversation_store_service().get_conversation_detail(
+        conversation_id, owner_key=owner_key
+    )
     return ok(detail, message="查询成功")
 
 
 @router.post("/conversation/chat")
-def conversation_chat(payload: ChatRequest, role: str = Depends(get_current_role)) -> dict:
+def conversation_chat(
+    payload: ChatRequest,
+    role: str = Depends(get_current_role),
+    owner_key: str = Depends(get_owner_key),
+) -> dict:
     conversation_id = payload.conversation_id.strip()
     query = payload.query.strip()
     image_urls = [item.strip() for item in payload.image_urls if item and item.strip()]
@@ -97,7 +119,9 @@ def conversation_chat(payload: ChatRequest, role: str = Depends(get_current_role
         return fail("query 参数不能为空", code=400)
 
     try:
-        with request_model_scope(payload.model, role), request_conversation_scope(conversation_id):
+        with request_model_scope(payload.model, role), request_conversation_scope(
+            conversation_id
+        ), request_owner_scope(owner_key):
             result = get_conversation_chat_service().chat(
                 conversation_id, query, payload.mode, image_urls
             )
@@ -110,7 +134,11 @@ def conversation_chat(payload: ChatRequest, role: str = Depends(get_current_role
 
 
 @router.post("/conversation/chat/stream")
-def conversation_chat_stream(payload: ChatRequest, role: str = Depends(get_current_role)):
+def conversation_chat_stream(
+    payload: ChatRequest,
+    role: str = Depends(get_current_role),
+    owner_key: str = Depends(get_owner_key),
+):
     """SSE 流式问答：meta -> delta* -> sources -> verification -> done。"""
     conversation_id = payload.conversation_id.strip()
     query = payload.query.strip()
@@ -140,7 +168,9 @@ def conversation_chat_stream(payload: ChatRequest, role: str = Depends(get_curre
         iterator = get_conversation_chat_service().chat_stream(
             conversation_id, query, payload.mode, image_urls
         )
-        with request_model_scope(selected_model, role), request_conversation_scope(conversation_id):
+        with request_model_scope(selected_model, role), request_conversation_scope(
+            conversation_id
+        ), request_owner_scope(owner_key):
             ctx = contextvars.copy_context()  # 必须在 scope 内取，才带上本次模型与会话
             try:
                 while True:
@@ -148,6 +178,10 @@ def conversation_chat_stream(payload: ChatRequest, role: str = Depends(get_curre
                     if event is None:
                         break
                     yield sse(event["event"], event["data"])
+            except PermissionError as exc:
+                # 演示样本只读。单独分支：落到下面的 Exception 会变成"服务器内部错误"，
+                # 前端就分不清"我点了只读样本"和"后端挂了"
+                yield sse("error", {"message": str(exc), "code": 403})
             except ValueError as exc:
                 yield sse("error", {"message": str(exc)})
             except Exception as exc:
@@ -166,14 +200,14 @@ def conversation_chat_stream(payload: ChatRequest, role: str = Depends(get_curre
 
 
 @router.post("/conversation/pin")
-def pin_conversation(payload: PinConversationRequest) -> dict:
+def pin_conversation(payload: PinConversationRequest, owner_key: str = Depends(get_owner_key)) -> dict:
     """置顶 / 取消置顶（幂等）。排序由服务端负责，前端拿到后重拉列表即可。"""
     conversation_id = payload.conversation_id.strip()
     if not conversation_id:
         return fail("conversation_id 参数不能为空", code=400)
     try:
         result = get_conversation_store_service().set_conversation_pinned(
-            conversation_id, payload.pinned
+            conversation_id, payload.pinned, owner_key=owner_key
         )
     except ValueError as exc:
         return fail(str(exc), code=400)
@@ -181,7 +215,7 @@ def pin_conversation(payload: PinConversationRequest) -> dict:
 
 
 @router.post("/conversation/delete")
-def delete_conversation(payload: DeleteConversationRequest) -> dict:
+def delete_conversation(payload: DeleteConversationRequest, owner_key: str = Depends(get_owner_key)) -> dict:
     """删除会话：单事务级联清理全部关联数据，事务成功后清理文件与向量索引。"""
     import shutil
 
@@ -189,7 +223,11 @@ def delete_conversation(payload: DeleteConversationRequest) -> dict:
     if not conversation_id:
         return fail("conversation_id 参数不能为空", code=400)
 
-    result = get_conversation_store_service().delete_conversation(conversation_id)
+    # 越权时这里抛「会话不存在」，后面的文件清理根本不会执行——
+    # 这个顺序很重要：先校验再删文件，否则别人传个别人的 ID 就能删掉一堆目录
+    result = get_conversation_store_service().delete_conversation(
+        conversation_id, owner_key=owner_key
+    )
 
     for rel in (
         os.path.join("uploads", conversation_id),
@@ -198,13 +236,23 @@ def delete_conversation(payload: DeleteConversationRequest) -> dict:
         os.path.join("uploads", "images", conversation_id),
     ):
         shutil.rmtree(ResourceUtils.get_resource_path(rel), ignore_errors=True)
+    # 交付文件是散落在 generated_docs 里的，得先按登记表查出名字再逐个删，
+    # 否则这个目录只增不减（旧代码就是没有这一步）
+    unlink_generated_files(
+        delete_generated_files(conversation_id),
+        ResourceUtils.get_resource_path(_FILE_DOWNLOAD_DIR),
+    )
     get_document_index_service().delete_conversation_index(conversation_id)
 
     return ok(result, message="删除成功")
 
 
 @router.post("/conversation/image/upload")
-def upload_image(conversation_id: str = Form(...), file: UploadFile = File(...)) -> dict:
+def upload_image(
+    conversation_id: str = Form(...),
+    file: UploadFile = File(...),
+    owner_key: str = Depends(get_owner_key),
+) -> dict:
     conversation_id = conversation_id.strip()
     original_filename = file.filename or ""
     if not conversation_id:
@@ -222,7 +270,7 @@ def upload_image(conversation_id: str = Form(...), file: UploadFile = File(...))
     if file.size and file.size > settings.upload_max_content_length:
         return fail("文件大小超过上传限制", code=400)
 
-    get_conversation_store_service().ensure_conversation_exists(conversation_id)
+    get_conversation_store_service().ensure_conversation_writable(conversation_id, owner_key=owner_key)
     save_dir = ResourceUtils.ensure_resource_dir(os.path.join("uploads", "images", conversation_id))
     stored_name = f"img_{uuid.uuid4().hex[:12]}.{extension}"
     save_path = os.path.join(save_dir, stored_name)
@@ -244,13 +292,25 @@ _FILE_DOWNLOAD_DIR = "generated_docs"
 
 
 @router.get("/conversation/file/{filename}")
-def serve_generated_file(filename: str):
+def serve_generated_file(filename: str, owner_key: str = Depends(get_owner_key)):
     """下载会话过程中生成的交付文件（如 html_document_tool 产出的 HTML 简历）。
 
     一律以 attachment 方式下发，避免服务端托管的用户内容在本站域内被浏览器直接渲染成页面。
+
+    归属靠生成时登记的 `generated_files` 表反查——文件名本身不含会话信息，
+    没有这张表的话"知道文件名就能下载"是唯一的保护。
     """
     if not _is_safe_segment(filename):
         return fail("filename 非法", code=400)
+
+    conversation_id = lookup_generated_file(filename)
+    if conversation_id is None:
+        # 未登记 = 本功能上线前的旧文件。只放行管理员，否则等于维持原来的弱保护
+        if owner_key != ADMIN_OWNER:
+            return fail("文件不存在", code=404)
+    else:
+        # 越权与不存在同样回 404，不泄漏文件名是否真实存在
+        assert_conversation_owner(conversation_id, owner_key)
 
     file_dir = os.path.realpath(ResourceUtils.get_resource_path(_FILE_DOWNLOAD_DIR))
     file_path = os.path.realpath(os.path.join(file_dir, filename))
@@ -266,11 +326,16 @@ def serve_generated_file(filename: str):
 
 
 @image_router.get("/conversation/image/{conversation_id}/{filename}")
-def serve_image(conversation_id: str, filename: str):
+def serve_image(conversation_id: str, filename: str, owner_key: str = Depends(get_owner_key)):
     if not _is_safe_segment(conversation_id):
         return fail("conversation_id 非法", code=400)
     if not _is_safe_segment(filename):
         return fail("filename 非法", code=400)
+
+    # 图片是会话资源：path 里带 conversation_id，所以能直接判归属。
+    # 这个端点被 <img src> 直接引用、不带自定义头，靠同源 cookie 拿到同一份身份。
+    # 只读的演示样本要能看图，所以用 assert_conversation_owner 而不是 writable。
+    assert_conversation_owner(conversation_id, owner_key)
 
     image_dir = os.path.realpath(
         ResourceUtils.get_resource_path(os.path.join("uploads", "images", conversation_id))

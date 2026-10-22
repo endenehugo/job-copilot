@@ -23,6 +23,13 @@ from app.core.deps import (
     get_interview_simulation_service,
 )
 from app.core.model_scope import request_model_scope
+from app.core.ownership import (
+    assert_child_owner,
+    assert_conversation_owner,
+    check_owner,
+    get_owner_key,
+    require_writable,
+)
 from app.core.response import fail, ok
 from app.core.security import get_current_role
 from app.repositories import (
@@ -79,6 +86,7 @@ def start_interview(
     payload: InterviewStartRequest,
     background_tasks: BackgroundTasks,
     role: str = Depends(get_current_role),
+    owner_key: str = Depends(get_owner_key),
 ) -> dict:
     conversation_id = payload.conversation_id.strip()
     direction = payload.direction.strip() or "general"
@@ -88,7 +96,7 @@ def start_interview(
         return fail("conversation_id 参数不能为空", code=400)
 
     store_service = get_conversation_store_service()
-    store_service.ensure_conversation_exists(conversation_id)
+    store_service.ensure_conversation_writable(conversation_id, owner_key=owner_key)
 
     resume_text = _read_latest_resume_text(store_service, conversation_id)
     if not resume_text:
@@ -279,7 +287,7 @@ class _InterviewFlowError(Exception):
         self.code = code
 
 
-def _load_answer_context(session_id: str) -> dict:
+def _load_answer_context(session_id: str, owner_key: str) -> dict:
     """事务一：读会话快照与面试历史，读完即释放（LLM 调用不能占着连接）。
 
     抽成独立函数是为了让流式端点复用同一套校验：会话是否存在、是否已结束、
@@ -294,6 +302,12 @@ def _load_answer_context(session_id: str) -> dict:
             raise _InterviewFlowError("面试已结束", 400)
 
         conversation_id = interview_session.conversation_id
+        # 第三层授权：session_id 直取子表，必须回查父会话。
+        # 作答是写操作（要落消息与轮次），所以要求可写
+        require_writable(
+            assert_child_owner(session, conversation_id, owner_key, "面试会话不存在"),
+            owner_key,
+        )
         current_round = interview_session.round_count
         # 题库快照：只用于"这一轮该问什么"的决策。真正的游标推进在落库事务里
         # 用锁内重读的值，避免和后台补题互相覆盖。
@@ -487,7 +501,11 @@ def _plan_next(
 
 
 @router.post("/interview/answer")
-def answer_interview(payload: InterviewAnswerRequest, role: str = Depends(get_current_role)) -> dict:
+def answer_interview(
+    payload: InterviewAnswerRequest,
+    role: str = Depends(get_current_role),
+    owner_key: str = Depends(get_owner_key),
+) -> dict:
     session_id = payload.session_id.strip()
     answer = payload.answer.strip()
 
@@ -497,7 +515,7 @@ def answer_interview(payload: InterviewAnswerRequest, role: str = Depends(get_cu
         return fail("answer 参数不能为空", code=400)
 
     try:
-        ctx = _load_answer_context(session_id)
+        ctx = _load_answer_context(session_id, owner_key)
     except _InterviewFlowError as exc:
         return fail(exc.message, code=exc.code)
 
@@ -556,7 +574,9 @@ def _next_or_none(iterator):
 
 @router.post("/interview/answer/stream")
 async def answer_interview_stream(
-    payload: InterviewAnswerRequest, role: str = Depends(get_current_role)
+    payload: InterviewAnswerRequest,
+    role: str = Depends(get_current_role),
+    owner_key: str = Depends(get_owner_key),
 ):
     """流式作答：评价边生成边下发，题目生成完再补一条。
 
@@ -575,7 +595,7 @@ async def answer_interview_stream(
         return fail("answer 参数不能为空", code=400)
 
     try:
-        answer_ctx = _load_answer_context(session_id)
+        answer_ctx = _load_answer_context(session_id, owner_key)
     except _InterviewFlowError as exc:
         return fail(exc.message, code=exc.code)
 
@@ -675,7 +695,9 @@ async def answer_interview_stream(
 
 
 @router.post("/interview/delete")
-def delete_interview(payload: InterviewDeleteRequest) -> dict:
+def delete_interview(
+    payload: InterviewDeleteRequest, owner_key: str = Depends(get_owner_key)
+) -> dict:
     """删除单场面试（场次 + 全部问答消息），供会话树子节点操作。"""
     from sqlalchemy import delete as sql_delete
 
@@ -689,6 +711,13 @@ def delete_interview(payload: InterviewDeleteRequest) -> dict:
             interview_session = InterviewSessionRepository.get_by_session_id(session, session_id)
             if interview_session is None:
                 return fail("面试会话不存在", code=404)
+            # 第三层：按 session_id 直取，回查父会话（事务内，用 check_owner）
+            require_writable(
+                assert_child_owner(
+                    session, interview_session.conversation_id, owner_key, "面试会话不存在"
+                ),
+                owner_key,
+            )
             session.execute(
                 sql_delete(InterviewMessage).where(InterviewMessage.session_id == session_id)
             )
@@ -699,10 +728,14 @@ def delete_interview(payload: InterviewDeleteRequest) -> dict:
 
 
 @router.get("/interview/list")
-def list_interviews(conversation_id: str = Query(default="")) -> dict:
+def list_interviews(
+    conversation_id: str = Query(default=""), owner_key: str = Depends(get_owner_key)
+) -> dict:
     conversation_id = conversation_id.strip()
     if not conversation_id:
         return fail("conversation_id 参数不能为空", code=400)
+
+    assert_conversation_owner(conversation_id, owner_key)
 
     session = DatabaseManager.get_session()
     try:
@@ -727,7 +760,9 @@ def list_interviews(conversation_id: str = Query(default="")) -> dict:
 
 
 @router.get("/interview/detail")
-def interview_detail(session_id: str = Query(default="")) -> dict:
+def interview_detail(
+    session_id: str = Query(default=""), owner_key: str = Depends(get_owner_key)
+) -> dict:
     session_id = session_id.strip()
     if not session_id:
         return fail("session_id 参数不能为空", code=400)
@@ -737,6 +772,9 @@ def interview_detail(session_id: str = Query(default="")) -> dict:
         interview_session = InterviewSessionRepository.get_by_session_id(session, session_id)
         if interview_session is None:
             return fail("面试会话不存在", code=404)
+        # 第三层：session_id 直取，回查父会话（只读场景，不要求可写）。
+        # 越权也回「面试会话不存在」，与上面 entity is None 的分支保持一致
+        assert_child_owner(session, interview_session.conversation_id, owner_key, "面试会话不存在")
 
         messages = InterviewMessageRepository.list_by_session_id(session, session_id)
         bank = parse_bank(interview_session.initial_questions)

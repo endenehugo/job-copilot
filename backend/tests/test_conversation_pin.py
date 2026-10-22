@@ -15,6 +15,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import scoped_session, sessionmaker
 
+from app.core.ownership import ADMIN_OWNER
 from app.repositories.conversation_repository import ConversationRepository
 from app.repositories.mysql_base import Base, DatabaseManager
 
@@ -101,13 +102,13 @@ def test_pin_moves_to_top_and_unpin_restores_order(store):
     _seed("c_mid", "中间", 20)
     _seed("c_new", "最新", 10)
 
-    assert _ids(store.list_conversations(limit=10)) == ["c_new", "c_mid", "c_old"]
+    assert _ids(store.list_conversations(limit=10, owner_key=ADMIN_OWNER)) == ["c_new", "c_mid", "c_old"]
 
-    store.set_conversation_pinned("c_old", True)
-    assert _ids(store.list_conversations(limit=10)) == ["c_old", "c_new", "c_mid"]
+    store.set_conversation_pinned("c_old", True, owner_key=ADMIN_OWNER)
+    assert _ids(store.list_conversations(limit=10, owner_key=ADMIN_OWNER)) == ["c_old", "c_new", "c_mid"]
 
-    store.set_conversation_pinned("c_old", False)
-    assert _ids(store.list_conversations(limit=10)) == ["c_new", "c_mid", "c_old"]
+    store.set_conversation_pinned("c_old", False, owner_key=ADMIN_OWNER)
+    assert _ids(store.list_conversations(limit=10, owner_key=ADMIN_OWNER)) == ["c_new", "c_mid", "c_old"]
 
 
 def test_pin_survives_list_limit(store):
@@ -116,15 +117,15 @@ def test_pin_survives_list_limit(store):
     for index in range(2, 6):
         _seed(f"c_{index}", f"第{index}个", 50 - index * 10)
 
-    store.set_conversation_pinned("c_1", True)
-    page = store.list_conversations(limit=2)
+    store.set_conversation_pinned("c_1", True, owner_key=ADMIN_OWNER)
+    page = store.list_conversations(limit=2, owner_key=ADMIN_OWNER)
     assert len(page) == 2
     assert page[0]["conversation_id"] == "c_1"
 
 
 def test_pin_does_not_touch_updated_at_and_is_idempotent(store):
     _seed("c_a", "甲", 10)
-    store.set_conversation_pinned("c_a", True)
+    store.set_conversation_pinned("c_a", True, owner_key=ADMIN_OWNER)
 
     session = DatabaseManager.get_session()
     try:
@@ -138,7 +139,7 @@ def test_pin_does_not_touch_updated_at_and_is_idempotent(store):
     # 置顶不是"活跃"，改写 updated_at 会让取消置顶后回不到原位
     assert updated_at == datetime(2026, 10, 22, 11, 50, 0)
 
-    store.set_conversation_pinned("c_a", True)
+    store.set_conversation_pinned("c_a", True, owner_key=ADMIN_OWNER)
     session = DatabaseManager.get_session()
     try:
         row = ConversationRepository().get_by_conversation_id(session, "c_a")
@@ -149,9 +150,9 @@ def test_pin_does_not_touch_updated_at_and_is_idempotent(store):
 
 def test_pinned_item_exposes_pinned_at(store):
     _seed("c_p", "带置顶", 5)
-    assert store.list_conversations(limit=1)[0]["pinned_at"] is None
-    store.set_conversation_pinned("c_p", True)
-    assert store.list_conversations(limit=1)[0]["pinned_at"] is not None
+    assert store.list_conversations(limit=1, owner_key=ADMIN_OWNER)[0]["pinned_at"] is None
+    store.set_conversation_pinned("c_p", True, owner_key=ADMIN_OWNER)
+    assert store.list_conversations(limit=1, owner_key=ADMIN_OWNER)[0]["pinned_at"] is not None
 
 
 def test_pin_missing_conversation_returns_400():

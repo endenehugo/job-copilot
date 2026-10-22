@@ -15,6 +15,7 @@ from app.api import auth, conversations, documents, exports, interviews, jobs, k
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.response import ok
+from app.core.visitor_middleware import VisitorMiddleware
 from app.utils import ResourceUtils
 from app.utils.api_key_checker import check_all
 
@@ -60,6 +61,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# 访客身份：懒签发签名 Cookie，写 request.state.owner_key。
+# 放在 CORS 之后注册 = 在 CORS 内层，保证预检请求先被 CORS 处理掉
+app.add_middleware(VisitorMiddleware)
 
 register_exception_handlers(app)
 app.include_router(system.router)

@@ -70,6 +70,51 @@ def decode_token(token: str) -> dict | None:
         return None
 
 
+_VISITOR_AUDIENCE = "job-copilot-visitor"
+
+
+def create_visitor_token(visitor_id: str) -> str:
+    """签发给匿名访客的长期令牌。
+
+    与管理员 token 共用密钥，但用 `aud` 区分用途：管理员 token 没有这个
+    audience，所以拿它当 cookie 用会被 decode_visitor 拒掉；反过来，
+    访客 token 缺 `role=admin`，也过不了 get_current_role。两套身份不互通。
+    """
+    return jwt.encode(
+        {
+            "sub": visitor_id,
+            "aud": _VISITOR_AUDIENCE,
+            "iat": int(time.time()),
+        },
+        _get_secret(),
+        algorithm="HS256",
+    )
+
+
+def decode_visitor(token: str | None) -> str | None:
+    """校验访客令牌，无效/过期/伪造一律返回 None。
+
+    这里不抛异常也不发日志告警：访客 cookie 失效是常态（清缓存、换浏览器、
+    密钥轮换），每次访问都记一条日志只会淹没真正的问题。
+    """
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(
+            token.strip(),
+            _get_secret(),
+            algorithms=["HS256"],
+            audience=_VISITOR_AUDIENCE,
+        )
+    except jwt.PyJWTError:
+        return None
+    visitor_id = str(payload.get("sub") or "")
+    # 形态校验：签发侧固定 v_ + 24 hex，这里挡住手写 cookie 塞任意字符串
+    if not visitor_id.startswith("v_") or len(visitor_id) > 64:
+        return None
+    return visitor_id
+
+
 def get_current_role(x_admin_token: str = Header(default="", alias="X-Admin-Token")) -> str:
     """FastAPI 依赖：无 token / token 无效一律返回普通用户角色。"""
     payload = decode_token(x_admin_token)

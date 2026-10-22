@@ -24,6 +24,9 @@ class Conversation(Base):
     # 置顶时间；NULL = 未置顶。用时间而不是布尔，留出"按置顶先后排"的余地。
     # 注意：这是后加的列，create_all 不会给已有表补，靠 mysql_base._ensure_columns 兜底。
     pinned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, default=None)
+    # 归属标识，取值见 core/ownership.py。空串 = 归属功能上线前的历史会话，
+    # 只有管理员可见——用"空值语义"代替一次数据迁移。
+    owner_key: Mapped[str] = mapped_column(String(64), nullable=False, default="", index=True)
 
 
 class ConversationRepository:
@@ -37,12 +40,23 @@ class ConversationRepository:
         stmt = select(Conversation).where(Conversation.conversation_id == conversation_id)
         return session.execute(stmt).scalar_one_or_none()
 
-    def list_recent(self, session: Session, limit: int = 50) -> list[Conversation]:
-        # 排序必须在 SQL 里做：置顶的会话可能很旧，取回 50 条再在内存里排会把它截掉。
-        # pinned_at IS NULL → 0（置顶）在前、1（未置顶）在后；置顶之间按置顶时间倒序。
+    def list_recent(
+        self, session: Session, limit: int = 50, owner_keys: list[str] | None = None
+    ) -> list[Conversation]:
+        """按活跃度取最近会话。
+
+        `owner_keys` 为 None 表示不过滤（管理员视角）；否则只取归属在这组里的行。
+        传空列表会得到空结果而不是全表——这是有意的：调用方拿不到身份时
+        应该"看不到"，不该"看到全部"。
+
+        排序必须在 SQL 里做：置顶的会话可能很旧，取回 50 条再在内存里排会把它截掉。
+        pinned_at IS NULL → 0（置顶）在前、1（未置顶）在后；置顶之间按置顶时间倒序。
+        """
+        stmt = select(Conversation)
+        if owner_keys is not None:
+            stmt = stmt.where(Conversation.owner_key.in_(owner_keys))
         stmt = (
-            select(Conversation)
-            .order_by(
+            stmt.order_by(
                 Conversation.pinned_at.is_(None),
                 desc(Conversation.pinned_at),
                 desc(Conversation.updated_at),

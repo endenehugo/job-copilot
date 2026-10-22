@@ -62,6 +62,7 @@ def build_agent_system_prompt() -> str:
 
 from app.core.llm_factory import build_chat_llm
 from app.core.model_scope import current_chat_model
+from app.core.ownership import current_owner_key
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
@@ -139,7 +140,12 @@ class ConversationChatService:
         normalized_mode = mode if mode in {"agent", "rag", "memory"} else "agent"
         effective_query = (query or "").strip() or "请描述图片内容。"
         normalized_image_urls = [item for item in (image_urls or []) if item]
-        self.conversation_store_service.ensure_conversation_exists(conversation_id)
+        # 归属从请求作用域取：这条调用链太深（chat_stream → 这里），逐层透传必漏。
+        # 用 writable 而非 exists：演示样本对访客可见，但对话会落消息，
+        # 不拦的话第一个访客就能把样本聊脏
+        self.conversation_store_service.ensure_conversation_writable(
+            conversation_id, owner_key=current_owner_key()
+        )
         self._ensure_initialized()
 
         old_summary, summarized_until_id = self.conversation_store_service.get_conversation_summary(conversation_id)
@@ -224,7 +230,9 @@ class ConversationChatService:
 
         # 5. 存储历史（存原始回答，不含引用标记）
         self.conversation_store_service.append_message_pair(conversation_id, user_content, answer, normalized_mode)
-        detail = self.conversation_store_service.get_conversation_detail(conversation_id)
+        detail = self.conversation_store_service.get_conversation_detail(
+            conversation_id, owner_key=current_owner_key()
+        )
         return {
             "answer": cited_answer,  # 返回带引用的回答
             "original_answer": answer,
@@ -316,7 +324,9 @@ class ConversationChatService:
 
         # 与非流式一致：持久化原始回答（不含引用标记）
         self.conversation_store_service.append_message_pair(conversation_id, user_content, answer, normalized_mode)
-        detail = self.conversation_store_service.get_conversation_detail(conversation_id)
+        detail = self.conversation_store_service.get_conversation_detail(
+            conversation_id, owner_key=current_owner_key()
+        )
 
         # done 先发：验证还要跑一次 LLM（实测 3~8 秒），不能让它挡在回答前面
         yield {"event": "sources", "data": {"sources": source_docs}}

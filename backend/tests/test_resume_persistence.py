@@ -20,6 +20,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import scoped_session, sessionmaker
 
 import app.repositories  # noqa: F401  确保所有模型注册到 Base.metadata
+from app.core.ownership import ADMIN_OWNER
 from app.repositories.mysql_base import Base, DatabaseManager
 from app.repositories import (
     ConversationMessageMeta,
@@ -81,7 +82,7 @@ def _patch_db(sqlite_engine):
 @pytest.fixture
 def store():
     svc = ConversationStoreService()
-    cid = svc.create_conversation("持久化测试", "agent")["conversation_id"]
+    cid = svc.create_conversation("持久化测试", "agent", owner_key=ADMIN_OWNER)["conversation_id"]
     yield svc, cid
 
 
@@ -221,7 +222,7 @@ def test_announce_writes_pair_with_meta(store):
                                   "data": service.normalize_resume_data(_SAMPLE_DATA),
                                   "warnings": ["w1"], "missing": []})
 
-    detail = store_svc.get_conversation_detail(cid)
+    detail = store_svc.get_conversation_detail(cid, owner_key=ADMIN_OWNER)
     assert detail["message_count"] == 2
     roles = [m["role"] for m in detail["messages"]]
     assert roles == ["user", "assistant"]
@@ -274,7 +275,7 @@ def test_dirty_meta_payload_does_not_break_detail(store):
     finally:
         session.close()
 
-    detail = store_svc.get_conversation_detail(cid)
+    detail = store_svc.get_conversation_detail(cid, owner_key=ADMIN_OWNER)
     assist = [m for m in detail["messages"] if m["role"] == "assistant"][0]
     assert "meta" not in assist
 
@@ -289,7 +290,7 @@ def test_delete_conversation_clears_generations_and_meta(store):
         cid, "生成简历", "已生成", assistant_meta={"kind": "resume", "generation_id": saved["generation_id"]}
     )
 
-    store_svc.delete_conversation(cid)
+    store_svc.delete_conversation(cid, owner_key=ADMIN_OWNER)
 
     session = DatabaseManager.get_session()
     try:
@@ -332,7 +333,7 @@ def test_generate_persists_and_announces(store, template_ready, monkeypatch):
     assert result["html_url"].endswith(".html")
     assert "html_path" in result  # 路由层负责剥掉，服务层保留便于排查
 
-    detail = store_svc.get_conversation_detail(cid)
+    detail = store_svc.get_conversation_detail(cid, owner_key=ADMIN_OWNER)
     assist = [m for m in detail["messages"] if m["role"] == "assistant"][0]
     assert assist["meta"]["generation_id"] == result["generation_id"]
     assert "已按" in assist["content"]

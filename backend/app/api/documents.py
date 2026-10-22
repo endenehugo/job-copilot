@@ -10,7 +10,7 @@ import os
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 
 from app.core.config import settings
 from app.core.deps import (
@@ -18,6 +18,7 @@ from app.core.deps import (
     get_document_index_service,
     get_document_parser_service,
 )
+from app.core.ownership import get_owner_key
 from app.core.response import fail, ok
 from app.repositories import DatabaseManager, ResumeVersionRepository
 from app.schemas.document import DeleteDocumentRequest
@@ -26,7 +27,11 @@ router = APIRouter(prefix="/api/v1")
 
 
 @router.post("/document/upload")
-def upload_document(conversation_id: str = Form(...), file: UploadFile = File(...)) -> dict:
+def upload_document(
+    conversation_id: str = Form(...),
+    file: UploadFile = File(...),
+    owner_key: str = Depends(get_owner_key),
+) -> dict:
     conversation_id = conversation_id.strip()
     if not conversation_id:
         return fail("conversation_id 参数不能为空", code=400)
@@ -36,7 +41,8 @@ def upload_document(conversation_id: str = Form(...), file: UploadFile = File(..
         return fail("文件大小超过上传限制", code=400)
 
     store_service = get_conversation_store_service()
-    store_service.ensure_conversation_exists(conversation_id)
+    # writable：上传会往会话里塞文档并重建向量索引，只读的演示样本必须挡在写盘之前
+    store_service.ensure_conversation_writable(conversation_id, owner_key=owner_key)
 
     parsed_document = get_document_parser_service().save_and_parse(conversation_id, file)
     document = store_service.bind_document(conversation_id, parsed_document, status="parsed")
@@ -55,13 +61,14 @@ def upload_document(conversation_id: str = Form(...), file: UploadFile = File(..
 
 
 @router.post("/document/delete")
-def delete_document(payload: DeleteDocumentRequest) -> dict:
+def delete_document(payload: DeleteDocumentRequest, owner_key: str = Depends(get_owner_key)) -> dict:
     document_id = payload.document_id.strip()
     if not document_id:
         return fail("document_id 参数不能为空", code=400)
 
     store_service = get_conversation_store_service()
-    document = store_service.remove_document(document_id)
+    # 第三层授权：入参是 document_id，服务内部回查父会话判归属
+    document = store_service.remove_document(document_id, owner_key=owner_key)
     _safe_delete(document.get("stored_path"))
     _safe_delete(document.get("parsed_text_path"))
 

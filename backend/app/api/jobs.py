@@ -22,6 +22,12 @@ from app.core.deps import (
     get_resume_scoring_service,
 )
 from app.core.model_scope import request_model_scope
+from app.core.ownership import (
+    assert_child_owner,
+    assert_conversation_owner,
+    get_owner_key,
+    require_writable,
+)
 from app.core.response import fail, ok
 from app.core.security import get_current_role
 from app.repositories import DatabaseManager, JobAnalysisRepository
@@ -55,7 +61,11 @@ def _read_latest_resume_text(conversation_id: str) -> str:
 
 
 @router.post("/job/analyze")
-def analyze_job(payload: JobAnalyzeRequest, role: str = Depends(get_current_role)) -> dict:
+def analyze_job(
+    payload: JobAnalyzeRequest,
+    role: str = Depends(get_current_role),
+    owner_key: str = Depends(get_owner_key),
+) -> dict:
     conversation_id = payload.conversation_id.strip()
     jd_text = payload.jd_text.strip()
 
@@ -65,7 +75,7 @@ def analyze_job(payload: JobAnalyzeRequest, role: str = Depends(get_current_role
         return fail("jd_text 参数不能为空", code=400)
 
     store_service = get_conversation_store_service()
-    store_service.ensure_conversation_exists(conversation_id)
+    store_service.ensure_conversation_writable(conversation_id, owner_key=owner_key)
 
     resume_text = _read_latest_resume_text(conversation_id)
     if not resume_text:
@@ -93,7 +103,11 @@ def analyze_job(payload: JobAnalyzeRequest, role: str = Depends(get_current_role
 
 
 @router.post("/job/analyze/stream")
-async def analyze_job_stream(payload: JobAnalyzeStreamRequest, role: str = Depends(get_current_role)):
+async def analyze_job_stream(
+    payload: JobAnalyzeStreamRequest,
+    role: str = Depends(get_current_role),
+    owner_key: str = Depends(get_owner_key),
+):
     """JD 分析（SSE）：按阶段推送进度，最后一条 done 携带与非流式端点一致的完整结果。
 
     为什么需要它：一次分析是两次模型调用（JD 解析 + 匹配评分），实测 8 秒起步、
@@ -114,7 +128,7 @@ async def analyze_job_stream(payload: JobAnalyzeStreamRequest, role: str = Depen
     # 前置校验放在流开始之前：这样"没简历/图片不存在"还能按普通 400 信封返回，
     # 前端不必从 SSE 里解析错误
     store_service = get_conversation_store_service()
-    store_service.ensure_conversation_exists(conversation_id)
+    store_service.ensure_conversation_writable(conversation_id, owner_key=owner_key)
     resume_text = _read_latest_resume_text(conversation_id)
     if not resume_text:
         documents = store_service.get_conversation_documents(conversation_id)
@@ -199,10 +213,19 @@ async def analyze_job_stream(payload: JobAnalyzeStreamRequest, role: str = Depen
 
 
 @router.get("/job/analysis/latest")
-def latest_job_analysis(conversation_id: str = Query(default="")) -> dict:
+def latest_job_analysis(
+    conversation_id: str = Query(default=""), owner_key: str = Depends(get_owner_key)
+) -> dict:
     conversation_id = conversation_id.strip()
     if not conversation_id:
         return fail("conversation_id 参数不能为空", code=400)
+
+    try:
+        assert_conversation_owner(conversation_id, owner_key)
+    except ValueError:
+        # 会话不存在与"还没有分析记录"对调用方是同一件事：没有可看的内容。
+        # 都回 404 而不是 400，避免用状态码差异反推会话是否存在
+        return fail("暂无分析记录", code=404)
 
     session = DatabaseManager.get_session()
     try:
@@ -215,10 +238,18 @@ def latest_job_analysis(conversation_id: str = Query(default="")) -> dict:
 
 
 @router.get("/job/analysis/list")
-def list_job_analyses(conversation_id: str = Query(default="")) -> dict:
+def list_job_analyses(
+    conversation_id: str = Query(default=""), owner_key: str = Depends(get_owner_key)
+) -> dict:
     conversation_id = conversation_id.strip()
     if not conversation_id:
         return fail("conversation_id 参数不能为空", code=400)
+
+    try:
+        assert_conversation_owner(conversation_id, owner_key)
+    except ValueError:
+        # 同上：看不到就当没有，返回空列表而不是报错
+        return ok({"analyses": []})
 
     session = DatabaseManager.get_session()
     try:
@@ -229,7 +260,9 @@ def list_job_analyses(conversation_id: str = Query(default="")) -> dict:
 
 
 @router.get("/job/analysis/detail")
-def job_analysis_detail(analysis_id: int = Query(default=0)) -> dict:
+def job_analysis_detail(
+    analysis_id: int = Query(default=0), owner_key: str = Depends(get_owner_key)
+) -> dict:
     """单条分析全量回看（会话树子节点用），结构同 /job/analysis/latest。"""
     if analysis_id <= 0:
         return fail("analysis_id 参数不能为空", code=400)
@@ -239,6 +272,9 @@ def job_analysis_detail(analysis_id: int = Query(default=0)) -> dict:
         analysis = JobAnalysisRepository.get_by_id(session, analysis_id)
         if analysis is None:
             return fail("分析记录不存在", code=404)
+        # 第三层授权：analysis_id 是自增整数，能顺序猜，必须回查父会话。
+        # 用 *session 版本复用当前连接 —— assert_conversation_owner 会 close 掉进行中的事务
+        assert_child_owner(session, analysis.conversation_id, owner_key, "分析记录不存在")
         data = analysis_entity_to_dict(analysis)
         # 回看时带上 JD 原文，主区视图可展示分析依据
         data["jd_text"] = analysis.jd_text
@@ -248,7 +284,9 @@ def job_analysis_detail(analysis_id: int = Query(default=0)) -> dict:
 
 
 @router.post("/job/analysis/delete")
-def delete_job_analysis(payload: JobAnalysisDeleteRequest) -> dict:
+def delete_job_analysis(
+    payload: JobAnalysisDeleteRequest, owner_key: str = Depends(get_owner_key)
+) -> dict:
     """删除单条分析记录，供会话树子节点操作。
 
     删除策略（2026-10-13 评审定稿）：允许删除并由前端确认提示；
@@ -264,6 +302,11 @@ def delete_job_analysis(payload: JobAnalysisDeleteRequest) -> dict:
             analysis = JobAnalysisRepository.get_by_id(session, payload.analysis_id)
             if analysis is None:
                 return fail("分析记录不存在", code=404)
+            # 同上：按 id 直取的子表资源必须回查父会话
+            require_writable(
+                assert_child_owner(session, analysis.conversation_id, owner_key, "分析记录不存在"),
+                owner_key,
+            )
             session.delete(analysis)
     finally:
         DatabaseManager.remove_session()
@@ -271,7 +314,11 @@ def delete_job_analysis(payload: JobAnalysisDeleteRequest) -> dict:
 
 
 @router.post("/job/analyze-from-screenshot")
-def analyze_from_screenshot(payload: ScreenshotAnalyzeRequest, role: str = Depends(get_current_role)) -> dict:
+def analyze_from_screenshot(
+    payload: ScreenshotAnalyzeRequest,
+    role: str = Depends(get_current_role),
+    owner_key: str = Depends(get_owner_key),
+) -> dict:
     conversation_id = payload.conversation_id.strip()
     image_url = payload.image_url.strip()
 
@@ -281,7 +328,7 @@ def analyze_from_screenshot(payload: ScreenshotAnalyzeRequest, role: str = Depen
         return fail("image_url 参数不能为空", code=400)
 
     store_service = get_conversation_store_service()
-    store_service.ensure_conversation_exists(conversation_id)
+    store_service.ensure_conversation_writable(conversation_id, owner_key=owner_key)
 
     # 解析图片 URL 为本地路径（复用对话服务里的白名单校验）
     from app.services.conversation_chat_service import ConversationChatService

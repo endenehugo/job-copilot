@@ -38,6 +38,18 @@ def register_exception_handlers(app: FastAPI) -> None:
         # service 层大量使用 ValueError 携带用户可读的中文错误信息
         return JSONResponse(status_code=200, content=fail(str(exc) or "请求参数不合法", code=400))
 
+    @app.exception_handler(PermissionError)
+    async def _handle_permission_error(request: Request, exc: PermissionError):
+        """演示会话被写操作时抛这个。
+
+        单独注册而不是让 Exception 兜底：PermissionError 是 OSError 子类，
+        落到兜底会变成 code=500「服务器内部错误」，前端就分不清
+        「我点了只读会话」和「后端挂了」。
+        """
+        return JSONResponse(
+            status_code=200, content=fail(str(exc) or "无权限执行该操作", code=403)
+        )
+
     @app.exception_handler(RequestValidationError)
     async def _handle_validation_error(request: Request, exc: RequestValidationError):
         errors = exc.errors()

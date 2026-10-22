@@ -210,6 +210,12 @@ class HtmlDocumentTool(BaseTool):
         with open(target, "w", encoding="utf-8") as handler:
             handler.write(document)
         name = os.path.basename(target)
+        # 登记归属：下载路由只拿得到文件名，不登记的话这份文件只有管理员能取。
+        # conversation_id 来自请求作用域（见 core/model_scope.request_conversation_scope）
+        from app.core.model_scope import current_conversation_id
+        from app.services.generated_file_service import register_generated_file
+
+        register_generated_file(name, current_conversation_id())
         return _artifact_json(name, target, os.path.getsize(target))
 
     @staticmethod

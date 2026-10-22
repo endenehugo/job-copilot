@@ -18,6 +18,13 @@ Base = declarative_base()
 _COLUMN_PATCHES = {
     "conversations": {
         "pinned_at": "ALTER TABLE conversations ADD COLUMN pinned_at DATETIME NULL",
+        # 索引必须与列写在同一条 ALTER 里：模型上的 index=True 只对 create_all
+        # 新建的表生效，已有表不会因为改了模型就长出索引。
+        "owner_key": (
+            "ALTER TABLE conversations "
+            "ADD COLUMN owner_key VARCHAR(64) NOT NULL DEFAULT '', "
+            "ADD INDEX idx_conversations_owner (owner_key)"
+        ),
     },
 }
 

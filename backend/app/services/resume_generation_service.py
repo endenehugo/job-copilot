@@ -39,6 +39,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.core.json_utils import parse_llm_json
 from app.core.llm_factory import build_chat_llm
 from app.core.model_scope import current_chat_model
+from app.services.generated_file_service import register_generated_file
 from app.repositories import (
     DatabaseManager,
     DocumentRepository,
@@ -477,6 +478,8 @@ class ResumeGenerationService:
         filename = f"{stem}.html"
         path = os.path.join(output_dir, filename)
         Path(path).write_text(html, encoding="utf-8")
+        # 登记归属：下载路由只看文件名，不登记的话这个文件就只有管理员能取
+        register_generated_file(filename, conversation_id)
         logger.info("简历已生成：%s（%d 字符，会话 %s）", filename, len(html), conversation_id)
         return filename, path
 

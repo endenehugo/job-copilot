@@ -6,6 +6,13 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
+from app.core.ownership import (
+    NOT_FOUND_MESSAGE,
+    READONLY_MESSAGE,
+    can_access,
+    is_readonly,
+    visible_owner_keys,
+)
 from app.repositories import (
     DatabaseManager,
     ConversationDocument,
@@ -35,7 +42,14 @@ class ConversationStoreService:
         self.message_meta_repository = MessageMetaRepository()
         self.document_repository = DocumentRepository()
 
-    def create_conversation(self, title: str = "新对话", mode: str = "agent") -> dict:
+    def create_conversation(
+        self, title: str = "新对话", mode: str = "agent", *, owner_key: str
+    ) -> dict:
+        """建会话。owner_key 是 keyword-only 且无默认值。
+
+        漏传应当直接 TypeError，而不是静默落成 legacy——后者会让「忘了传归属」
+        变成一个只有管理员看得见的静默 bug，比崩溃难查得多。
+        """
         session = self.database_manager.get_session()
         now = datetime.now()
         conversation_id = f"conv_{now.strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6]}"
@@ -50,16 +64,19 @@ class ConversationStoreService:
                     last_message_preview="",
                     created_at=now,
                     updated_at=now,
+                    owner_key=owner_key,
                 )
             return self._conversation_to_dict(entity)
         finally:
             session.close()
 
-    def list_conversations(self, limit: int = 50) -> list[dict]:
+    def list_conversations(self, limit: int = 50, *, owner_key: str) -> list[dict]:
         session = self.database_manager.get_session()
         try:
-            conversations = self.conversation_repository.list_recent(session, limit=limit)
-            items = [self._conversation_to_dict(item) for item in conversations]
+            conversations = self.conversation_repository.list_recent(
+                session, limit=limit, owner_keys=visible_owner_keys(owner_key)
+            )
+            items = [self._conversation_to_dict(item, viewer=owner_key) for item in conversations]
             self._attach_tree_badges(session, items)
             return items
         finally:
@@ -122,19 +139,20 @@ class ConversationStoreService:
             item["rewrite_count"] = rewrite_rows.get(cid, 0)
             item["resume_count"] = resume_rows.get(cid, 0)
 
-    def get_conversation_detail(self, conversation_id: str) -> dict:
+    def get_conversation_detail(self, conversation_id: str, *, owner_key: str) -> dict:
         session = self.database_manager.get_session()
         try:
             conversation = self.conversation_repository.get_by_conversation_id(session, conversation_id)
-            if conversation is None:
-                raise ValueError("会话不存在")
+            # 不存在与越权共用同一个错误文案，否则等于给了一个存在性探针
+            if conversation is None or not can_access(conversation.owner_key, owner_key):
+                raise ValueError(NOT_FOUND_MESSAGE)
             messages = self.message_repository.list_by_conversation_id(session, conversation_id)
             documents = self.document_repository.list_by_conversation_id(session, conversation_id)
             meta_map = self.message_meta_repository.map_payloads_by_conversation_id(
                 session, conversation_id
             )
             return {
-                **self._conversation_to_dict(conversation),
+                **self._conversation_to_dict(conversation, viewer=owner_key),
                 "messages": [
                     self._message_to_dict(item, self._parse_meta(meta_map.get(item.message_id)))
                     for item in messages
@@ -144,13 +162,30 @@ class ConversationStoreService:
         finally:
             session.close()
 
-    def ensure_conversation_exists(self, conversation_id: str) -> None:
+    def ensure_conversation_exists(self, conversation_id: str, *, owner_key: str) -> str:
+        """存在 + 当前身份可见。上传、分析、面试等链路的前置校验统一走这里。
+
+        返回归属值，让需要区分只读的调用方省掉一次重复查询。
+        """
         session = self.database_manager.get_session()
         try:
-            if self.conversation_repository.get_by_conversation_id(session, conversation_id) is None:
-                raise ValueError("会话不存在")
+            conversation = self.conversation_repository.get_by_conversation_id(session, conversation_id)
+            if conversation is None or not can_access(conversation.owner_key, owner_key):
+                raise ValueError(NOT_FOUND_MESSAGE)
+            return conversation.owner_key or ""
         finally:
             session.close()
+
+    def ensure_conversation_writable(self, conversation_id: str, *, owner_key: str) -> None:
+        """可见 + 可写。对话入口必须用它。
+
+        只做"可见"是不够的：演示样本对所有访客可见，但对话会往
+        `conversation_messages` 里写行——不拦的话第一个访客就能把样本聊脏，
+        后面所有人看到的都是他留下的内容。
+        """
+        owner = self.ensure_conversation_exists(conversation_id, owner_key=owner_key)
+        if is_readonly(owner, owner_key):
+            raise PermissionError(READONLY_MESSAGE)
 
     def get_conversation_messages(self, conversation_id: str) -> list[dict]:
         """会话消息（含卡片载荷）。
@@ -352,15 +387,25 @@ class ConversationStoreService:
         finally:
             session.close()
 
-    def remove_document(self, document_id: str) -> dict:
+    def remove_document(self, document_id: str, *, owner_key: str) -> dict:
+        """删文档。
+
+        这是第三层授权的典型：入参是 document_id，不经过 conversation_id，
+        必须回查父会话才知道归属。越权时返回「文档不存在」而不是「无权限」——
+        否则等于告诉对方这个 document_id 是真的。
+        """
         session = self.database_manager.get_session()
         try:
             with session.begin():
                 document = self.document_repository.get_by_document_id(session, document_id)
                 if document is None:
                     raise ValueError("文档不存在")
-                payload = self._document_to_dict(document)
                 conversation = self.conversation_repository.get_by_conversation_id(session, document.conversation_id)
+                if conversation is None or not can_access(conversation.owner_key, owner_key):
+                    raise ValueError("文档不存在")
+                if is_readonly(conversation.owner_key, owner_key):
+                    raise PermissionError(READONLY_MESSAGE)
+                payload = self._document_to_dict(document)
                 self.document_repository.delete(session, document)
                 if conversation is not None:
                     self.conversation_repository.update_summary(conversation, updated_at=datetime.now())
@@ -369,7 +414,8 @@ class ConversationStoreService:
             session.close()
 
     @staticmethod
-    def _conversation_to_dict(item) -> dict:
+    def _conversation_to_dict(item, viewer: str = "") -> dict:
+        owner = getattr(item, "owner_key", "") or ""
         return {
             "conversation_id": item.conversation_id,
             "title": item.title,
@@ -380,18 +426,25 @@ class ConversationStoreService:
             "updated_at": item.updated_at.isoformat(),
             # 前端只关心"有没有置顶"，但要给时间：同一次置顶内的先后顺序由它决定
             "pinned_at": item.pinned_at.isoformat() if item.pinned_at else None,
+            # 归属标识原样下发：管理员靠它分辨"这条是谁在用"，
+            # 访客只会看到自己的 v_xxx 与 demo，不构成泄漏
+            "owner_key": owner,
+            # 只读标记在服务端算好，前端不必知道 demo 这个约定的存在
+            "readonly": is_readonly(owner, viewer) if viewer else False,
         }
 
-    def set_conversation_pinned(self, conversation_id: str, pinned: bool) -> dict:
-        """置顶 / 取消置顶，幂等。"""
+    def set_conversation_pinned(self, conversation_id: str, pinned: bool, *, owner_key: str) -> dict:
+        """置顶 / 取消置顶，幂等。演示样本同样禁止——它不是访客自己的列表。"""
         session = self.database_manager.get_session()
         try:
             with session.begin():
                 conversation = self.conversation_repository.get_by_conversation_id(
                     session, conversation_id
                 )
-                if conversation is None:
-                    raise ValueError("会话不存在")
+                if conversation is None or not can_access(conversation.owner_key, owner_key):
+                    raise ValueError(NOT_FOUND_MESSAGE)
+                if is_readonly(conversation.owner_key, owner_key):
+                    raise PermissionError(READONLY_MESSAGE)
                 self.conversation_repository.set_pinned(session, conversation, pinned)
             return {
                 "conversation_id": conversation_id,
@@ -442,7 +495,7 @@ class ConversationStoreService:
             "updated_at": item.updated_at.isoformat(),
         }
 
-    def delete_conversation(self, conversation_id: str) -> dict:
+    def delete_conversation(self, conversation_id: str, *, owner_key: str) -> dict:
         """删除会话及全部关联数据（消息/文档/评分/简历版本/面试会话与问答）。
 
         单事务级联删除；文件与向量索引由路由层在事务成功后清理。
@@ -453,8 +506,10 @@ class ConversationStoreService:
         try:
             with session.begin():
                 conversation = self.conversation_repository.get_by_conversation_id(session, conversation_id)
-                if conversation is None:
-                    raise ValueError("会话不存在")
+                if conversation is None or not can_access(conversation.owner_key, owner_key):
+                    raise ValueError(NOT_FOUND_MESSAGE)
+                if is_readonly(conversation.owner_key, owner_key):
+                    raise PermissionError(READONLY_MESSAGE)
 
                 session_ids = [
                     s.session_id

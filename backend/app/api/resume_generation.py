@@ -10,21 +10,53 @@ import logging
 
 from fastapi import APIRouter, Depends, Query
 
-from app.core.deps import get_resume_generation_service
+from app.core.deps import get_conversation_store_service, get_resume_generation_service
 from app.core.model_scope import request_model_scope
+from app.core.ownership import (
+    assert_conversation_owner,
+    check_owner,
+    get_owner_key,
+    require_writable,
+    request_owner_scope,
+)
 from app.core.response import fail, ok
 from app.core.security import get_current_role
+from app.repositories import DatabaseManager, ResumeGenerationRepository
 from app.schemas.resume import ResumeGenerateRequest, ResumeRegenerateRequest
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1")
 
+_GENERATION_NOT_FOUND = "简历记录不存在"
+
+
+def _assert_generation_owner(generation_id: str, owner_key: str, *, writable: bool = False) -> None:
+    """第三层授权：generation_id 直取子表，回查会话归属。
+
+    越权与不存在都抛同一句「简历记录不存在」——如果越权回「会话不存在」、
+    不存在回「简历记录不存在」，两句话的差异本身就是一次存在性探测。
+    """
+    session = DatabaseManager.get_session()
+    try:
+        entity = ResumeGenerationRepository.get_by_generation_id(session, generation_id)
+        if entity is None:
+            raise ValueError(_GENERATION_NOT_FOUND)
+        try:
+            owner = check_owner(session, entity.conversation_id, owner_key)
+        except ValueError:
+            raise ValueError(_GENERATION_NOT_FOUND) from None
+        if writable:
+            require_writable(owner, owner_key)
+    finally:
+        session.close()
+
 
 @router.post("/resume/generate")
 def generate_resume(
     payload: ResumeGenerateRequest,
     role: str = Depends(get_current_role),
+    owner_key: str = Depends(get_owner_key),
 ) -> dict:
     """按会话内已解析简历生成一份 A4 简历 HTML。
 
@@ -41,8 +73,13 @@ def generate_resume(
         if str(k).strip() and str(v).strip()
     }
 
+    # 生成会读会话文档、写一条 generation 记录，属于写操作
+    get_conversation_store_service().ensure_conversation_writable(
+        conversation_id, owner_key=owner_key
+    )
+
     try:
-        with request_model_scope(payload.model, role):
+        with request_model_scope(payload.model, role), request_owner_scope(owner_key):
             result = get_resume_generation_service().generate(
                 conversation_id, extra_fields=extra or None
             )
@@ -62,11 +99,13 @@ def generate_resume(
 def list_resume_generations(
     conversation_id: str = Query(default=""),
     limit: int = Query(default=50, ge=1, le=200),
+    owner_key: str = Depends(get_owner_key),
 ) -> dict:
     """会话内的简历版本列表（不含正文，供侧栏树与历史切换）。"""
     conversation_id = (conversation_id or "").strip()
     if not conversation_id:
         return ok({"generations": []}, message="查询成功")
+    assert_conversation_owner(conversation_id, owner_key)
     return ok(
         {"generations": get_resume_generation_service().list_generations(conversation_id, limit)},
         message="查询成功",
@@ -74,13 +113,14 @@ def list_resume_generations(
 
 
 @router.get("/resume/generations/{generation_id}")
-def get_resume_generation(generation_id: str) -> dict:
+def get_resume_generation(generation_id: str, owner_key: str = Depends(get_owner_key)) -> dict:
     """单版详情：结构化数据 + HTML 正文 + 告警。
 
     HTML 文件若被清理，服务端会用 data_json 原地重渲染（响应里
     html_regenerated=true），前端不需要感知。
     """
     try:
+        _assert_generation_owner(generation_id, owner_key)
         result = get_resume_generation_service().load_generation(generation_id)
     except ValueError as exc:
         return fail(str(exc), code=404)
@@ -94,6 +134,7 @@ def get_resume_generation(generation_id: str) -> dict:
 def regenerate_resume(
     generation_id: str,
     payload: ResumeRegenerateRequest,
+    owner_key: str = Depends(get_owner_key),
 ) -> dict:
     """补字段后重渲染，产出新一版（0 次 LLM，约 20ms）。"""
     extra = {
@@ -102,6 +143,8 @@ def regenerate_resume(
         if str(k).strip() and str(v).strip()
     }
     try:
+        # 重渲染会新增一条 generation 记录，属于写操作
+        _assert_generation_owner(generation_id, owner_key, writable=True)
         result = get_resume_generation_service().rerender(generation_id, extra_fields=extra or None)
     except ValueError as exc:
         return fail(str(exc), code=400)
