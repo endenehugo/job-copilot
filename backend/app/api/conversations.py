@@ -49,7 +49,7 @@ from app.schemas.conversation import (
     DeleteConversationRequest,
     PinConversationRequest,
 )
-from app.utils import ResourceUtils
+from app.utils import ResourceUtils, skill_loader
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,21 @@ router = APIRouter(prefix="/api/v1")
 image_router = APIRouter()
 
 _SAFE_SEGMENT_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def _skill_error(skill: str) -> str | None:
+    """校验请求里带的技能名。
+
+    用全量清单而不是面板清单：interview / make-resume 只是不在面板里露面，
+    真被显式传进来仍要按各自策略处理（见 _apply_skill），不能在这里拒掉。
+    白名单的真正目的是挡住任意字符串进系统提示。
+    """
+    if not skill:
+        return None
+    valid = {item["name"] for item in skill_loader.list_skills(visible_only=False)}
+    if skill not in valid:
+        return f"未知技能：{skill}"
+    return None
 
 
 def _is_safe_segment(value: str) -> bool:
@@ -112,18 +127,22 @@ def conversation_chat(
     conversation_id = payload.conversation_id.strip()
     query = payload.query.strip()
     image_urls = [item.strip() for item in payload.image_urls if item and item.strip()]
+    skill = (payload.skill or "").strip()
 
     if not conversation_id:
         return fail("conversation_id 参数不能为空", code=400)
     if not query and not image_urls:
         return fail("query 参数不能为空", code=400)
+    skill_error = _skill_error(skill)
+    if skill_error:
+        return fail(skill_error, code=400)
 
     try:
         with request_model_scope(payload.model, role), request_conversation_scope(
             conversation_id
         ), request_owner_scope(owner_key):
             result = get_conversation_chat_service().chat(
-                conversation_id, query, payload.mode, image_urls
+                conversation_id, query, payload.mode, image_urls, skill
             )
     except ValueError as exc:
         return fail(str(exc), code=400)
@@ -143,11 +162,15 @@ def conversation_chat_stream(
     conversation_id = payload.conversation_id.strip()
     query = payload.query.strip()
     image_urls = [item.strip() for item in payload.image_urls if item and item.strip()]
+    skill = (payload.skill or "").strip()
 
     if not conversation_id:
         return fail("conversation_id 参数不能为空", code=400)
     if not query and not image_urls:
         return fail("query 参数不能为空", code=400)
+    skill_error = _skill_error(skill)
+    if skill_error:
+        return fail(skill_error, code=400)
 
     # 模型白名单先在端点内校验（快速失败），作用域必须在生成器内部开启——
     # 生成器在响应阶段才被消费，端点里 with 一下就退出时生成器还没跑
@@ -166,7 +189,7 @@ def conversation_chat_stream(
         # 恰好炸在 done 之后的验证阶段——用户看到的是"字打完了又冒出一段报错"。
         # 这里把整个生成器固定在同一个 context 里驱动，模型作用域在整条流上保持一致。
         iterator = get_conversation_chat_service().chat_stream(
-            conversation_id, query, payload.mode, image_urls
+            conversation_id, query, payload.mode, image_urls, skill
         )
         with request_model_scope(selected_model, role), request_conversation_scope(
             conversation_id

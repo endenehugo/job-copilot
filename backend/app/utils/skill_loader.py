@@ -17,6 +17,82 @@ from app.utils import ResourceUtils
 
 _SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
+# 技能的展示元信息。exposed=False 表示**对外不暴露**：
+# 既不进 /api/v1/skills，也不进系统提示的技能目录。
+# 三类原因：①本产品已有专用模块 + 确定性流水线承接（interview、make-resume），
+# 让用户再选一遍等于绕开模块的状态机和模板渲染；
+# ②后端没有对应执行能力（job-apply 要浏览器、contributor 要 GitHub 写权限）；
+# ③产出无处可放（offer 是一份本地进度表，本产品没有对应的存储与视图）。
+# title/group 由后端给，前端不要硬编码。
+SKILL_META: dict[str, dict] = {
+    "job-match": {
+        "title": "岗位匹配分析",
+        "group": "求职判断",
+        "summary": "对照 JD 逐项找证据，判断值不值得投",
+    },
+    "great-resume": {
+        "title": "简历经历提升",
+        "group": "求职判断",
+        "summary": "把真实经历改写成经得起追问的表达",
+    },
+    "project-guide": {
+        "title": "项目导学与面经",
+        "group": "面试准备",
+        "summary": "把项目整理成源码课程与面经",
+    },
+    "evidence-recap": {
+        "title": "交付证据复盘",
+        "group": "面试准备",
+        "summary": "把交付过程还原成可核验的证据链",
+    },
+    "offer": {
+        "title": "秋招进度管理",
+        "group": "过程管理",
+        "summary": "记录投递、面试与 Offer 进度",
+        "exposed": False,
+    },
+    "interview": {
+        "title": "模拟面试",
+        "group": "面试准备",
+        "summary": "见左侧「模拟面试」模块",
+        "exposed": False,
+    },
+    "make-resume": {
+        "title": "制作简历文件",
+        "group": "交付文件",
+        "summary": "见左侧「简历生成」模块",
+        "exposed": False,
+    },
+    "job-apply": {"title": "求职申请填写", "group": "过程管理", "exposed": False},
+    "contributor": {"title": "开源贡献", "group": "过程管理", "exposed": False},
+}
+
+
+def skill_meta(name: str) -> dict:
+    """取技能展示元信息，未登记的名字兜底成自身。"""
+    meta = SKILL_META.get(name) or {}
+    return {
+        "title": meta.get("title") or name,
+        "group": meta.get("group") or "其他",
+        "summary": meta.get("summary") or "",
+        "exposed": meta.get("exposed", True),
+    }
+
+
+def _auto_summary(description: str) -> str:
+    """未登记 summary 的技能：取 description 首句并截断。
+
+    面板一行放不下整句（最长的一条 78 字），所以登记的技能都手写 summary，
+    这里只是兜底，保证新加的 SKILL.md 不会显示一整段。
+    """
+    text = (description or "").split("；")[0].split("。")[0].strip()
+    head, sep, tail = text.partition("：")
+    # "中文岗位匹配分析技能：xxx" 这类前缀信息量为零（title 已经说了）
+    if sep and len(head) <= 16 and tail:
+        text = tail
+    return text if len(text) <= 46 else text[:45].rstrip("，、；") + "…"
+
+
 
 def _skills_root() -> str:
     return ResourceUtils.get_resource_path("skills")
@@ -38,8 +114,13 @@ def _parse_frontmatter(path: str) -> dict:
     return front
 
 
-def list_skills() -> list[dict]:
-    """扫描 resources/skills/*/SKILL.md，返回技能目录清单。"""
+def list_skills(visible_only: bool = True) -> list[dict]:
+    """扫描 resources/skills/*/SKILL.md，返回技能目录清单。
+
+    visible_only=True（默认）跳过 exposed=False 的技能，让接口、系统提示、
+    工具提示三处自动保持一致——否则会出现"用户看不到、模型还在系统提示里看到"。
+    需要全量（例如体检脚本）时传 False。
+    """
     skills: list[dict] = []
     root = _skills_root()
     if not os.path.isdir(root):
@@ -49,11 +130,23 @@ def list_skills() -> list[dict]:
         if not os.path.isfile(path):
             continue
         front = _parse_frontmatter(path)
+        name = front.get("name") or dirname
+        description = front.get("description", "")
+        meta = skill_meta(name)
+        if visible_only and not meta["exposed"]:
+            continue
         skills.append({
-            "name": front.get("name") or dirname,
-            "description": front.get("description", ""),
+            "name": name,
+            "title": meta["title"],
+            "group": meta["group"],
+            "summary": meta["summary"] or _auto_summary(description),
+            "description": description,
             "dirname": dirname,
         })
+    # 按 SKILL_META 的登记顺序输出（产品排序），未登记的技能排在最后。
+    # 前端按原顺序平铺渲染，键盘上下键不需要再做一次排序。
+    order = {name: index for index, name in enumerate(SKILL_META)}
+    skills.sort(key=lambda item: (order.get(item["name"], 999), item["name"]))
     return skills
 
 
@@ -119,6 +212,5 @@ def catalog_prompt() -> str:
     """生成进系统提示的技能清单文本（名称 + 一句话描述）。"""
     lines = []
     for skill in list_skills():
-        desc = skill["description"].split("；")[0].split("。")[0]
-        lines.append(f"- {skill['name']}：{desc}")
+        lines.append(f"- {skill['name']}：{skill['summary']}")
     return "\n".join(lines)

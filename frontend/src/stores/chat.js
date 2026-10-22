@@ -17,8 +17,14 @@ export const useChatStore = defineStore('chat', {
     loadedConversationId: '',
     sending: false,
     streamController: null, // AbortController，用于"停止生成"与会话切换时中断接收
+    // 外部视图（如 JD 分析卡片）请求输入框预置技能与草稿：
+    // { skill: 'job-match', text: '...' }。Composer 消费后置空，避免切视图回来又灌一遍
+    composerPreset: null,
   }),
   actions: {
+    presetComposer(preset) {
+      this.composerPreset = preset || null
+    },
     stopStreaming() {
       // 只中断前端接收；后端会继续生成并落库，之后切回该会话能看到完整回答
       this.streamController?.abort()
@@ -84,7 +90,7 @@ export const useChatStore = defineStore('chat', {
     dismissDoc(index) {
       this.pendingDocs.splice(index, 1)
     },
-    async send(query) {
+    async send(query, options = {}) {
       const conv = useConversationStore()
       const images = this.pendingImages.map((img) => img.url)
       if (!query.trim() && images.length === 0) {
@@ -114,6 +120,7 @@ export const useChatStore = defineStore('chat', {
             query,
             mode: 'agent',
             image_urls: images,
+            skill: options.skill || '',
           })
         )
         this.messages.push({
@@ -131,7 +138,7 @@ export const useChatStore = defineStore('chat', {
       // 同步会话标题/预览：不阻塞下一次发送；失败不影响刚收到的回答
       conv.loadList().catch(() => {})
     },
-    async sendStream(query) {
+    async sendStream(query, options = {}) {
       const conv = useConversationStore()
       const images = this.pendingImages.map((img) => img.url)
       if (!query.trim() && images.length === 0) {
@@ -190,6 +197,7 @@ export const useChatStore = defineStore('chat', {
               query,
               mode: 'agent',
               image_urls: images,
+              skill: options.skill || '',
             })
           ),
           signal: controller.signal,

@@ -1,12 +1,13 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { notifyError } from '../../api'
+import { notifyError, skillsApi } from '../../api'
 import { useChatStore } from '../../stores/chat'
 import { useConversationStore } from '../../stores/conversation'
 import { useResumeStore } from '../../stores/resume'
 import AppIcon from '../shell/AppIcon.vue'
 import PlusMenu from './PlusMenu.vue'
+import SkillMenu from './SkillMenu.vue'
 
 const props = defineProps({
   // hero：空态居中；docked：有消息后贴底。
@@ -26,6 +27,16 @@ const uploading = ref(false)
 const plusOpen = ref(false)
 const plusWrap = ref(null)
 const ta = ref(null)
+
+// 技能面板：清单来自后端（只含可选的 5 个，interview / make-resume 由模块承接）
+const skills = ref([])
+const skillOpen = ref(false)
+const skillIndex = ref(0)
+const selectedSkill = ref(null)
+const skillLoading = ref(false)
+// 自动弹一次：只在本标签页首次聚焦空输入框时弹。
+// 用 sessionStorage 而不是 localStorage——永久记住等于让这个入口消失
+const hintSeen = ref(sessionStorage.getItem('jc_skill_hint_seen') === '1')
 
 // 图片进"待发附件"，简历文档进会话级资料库——同一个入口，按类型分流
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp']
@@ -79,7 +90,7 @@ async function send() {
   await nextTick()
   autosize()
   try {
-    await chat.sendStream(query)
+    await chat.sendStream(query, { skill: selectedSkill.value?.name || '' })
   } catch (err) {
     notifyError(err)
   }
@@ -87,6 +98,28 @@ async function send() {
 }
 
 function onKeydown(e) {
+  // 技能面板打开时焦点仍在 textarea，方向键/回车先给面板
+  if (skillOpen.value) {
+    const total = skills.value.length
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (total) {
+        const step = e.key === 'ArrowDown' ? 1 : -1
+        skillIndex.value = (skillIndex.value + step + total) % total
+      }
+      return
+    }
+    if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) {
+      e.preventDefault()
+      pickSkill(skills.value[skillIndex.value])
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      skillOpen.value = false
+      return
+    }
+  }
   if (e.key === 'Escape' && plusOpen.value) {
     plusOpen.value = false
     return
@@ -103,14 +136,111 @@ function togglePlus() {
   plusOpen.value = !plusOpen.value
 }
 
+// ---- 技能面板 ----
+
+async function loadSkills() {
+  if (skills.value.length || skillLoading.value) return
+  skillLoading.value = true
+  try {
+    const res = await skillsApi.list()
+    skills.value = res.data?.skills || []
+  } catch (err) {
+    // 清单拉不到不该挡住输入，关掉面板让用户继续打字
+    notifyError(err)
+    skillOpen.value = false
+  } finally {
+    skillLoading.value = false
+  }
+}
+
+async function openSkillMenu() {
+  plusOpen.value = false
+  skillOpen.value = true
+  await loadSkills()
+  // 高亮停在已选技能上；没选过就停在第一项
+  const index = selectedSkill.value
+    ? skills.value.findIndex((item) => item.name === selectedSkill.value.name)
+    : 0
+  skillIndex.value = index > 0 ? index : 0
+}
+
+function pickSkill(item) {
+  if (!item) return
+  selectedSkill.value = item
+  skillOpen.value = false
+  ta.value?.focus()
+}
+
+function clearSkill() {
+  selectedSkill.value = null
+}
+
+function onOpenSkills() {
+  plusOpen.value = false
+  openSkillMenu()
+}
+
+function onFocus() {
+  // 只在"空输入 + 还没选技能 + 本页还没弹过"时自动露一次，
+  // 否则每写一句话都弹菜单，反而挡住消息区
+  if (hintSeen.value || skillOpen.value || selectedSkill.value || text.value.trim()) return
+  hintSeen.value = true
+  sessionStorage.setItem('jc_skill_hint_seen', '1')
+  openSkillMenu()
+}
+
+// 外部视图（JD 分析卡片）带技能与草稿进来：挂技能 chip、填好输入框、聚焦
+async function applyPreset(preset) {
+  if (!preset) return
+  await loadSkills()
+  const name = preset.skill || ''
+  selectedSkill.value = name
+    ? skills.value.find((item) => item.name === name) || { name, title: name }
+    : null
+  if (preset.text) {
+    text.value = preset.text
+    await nextTick()
+    autosize()
+  }
+  ta.value?.focus()
+}
+
+watch(
+  () => chat.composerPreset,
+  (preset) => {
+    if (!preset) return
+    chat.composerPreset = null
+    applyPreset(preset)
+  }
+)
+
+function onInput() {
+  autosize()
+  // 恰好输入 "/" 才唤起（"and/or" 这种不会命中），顺手把 "/" 吃掉
+  if (text.value === '/') {
+    text.value = ''
+    nextTick(autosize)
+    openSkillMenu()
+  }
+}
+
 function onDocMousedown(e) {
-  if (!plusOpen.value) return
-  if (plusWrap.value && !plusWrap.value.contains(e.target)) plusOpen.value = false
+  if (!plusOpen.value && !skillOpen.value) return
+  if (plusWrap.value && !plusWrap.value.contains(e.target)) {
+    plusOpen.value = false
+    skillOpen.value = false
+  }
 }
 
 onMounted(() => {
   document.addEventListener('mousedown', onDocMousedown)
   autosize()
+  // 从 JD 分析卡片跳过来时 Composer 刚挂载，watch 还没生效，这里补一次
+  if (chat.composerPreset) {
+    const preset = chat.composerPreset
+    chat.composerPreset = null
+    applyPreset(preset)
+  }
 })
 onBeforeUnmount(() => document.removeEventListener('mousedown', onDocMousedown))
 watch(() => chat.pendingImages.length, () => nextTick(autosize))
@@ -195,6 +325,15 @@ async function onFilesChange(e) {
         @pick-image="pickFiles"
         @open-docs="emit('open-panel', 'docs')"
         @open-kb="emit('open-panel', 'kb')"
+        @open-skills="onOpenSkills"
+      />
+
+      <SkillMenu
+        v-if="skillOpen"
+        :skills="skills"
+        :active-index="skillIndex"
+        @pick="pickSkill"
+        @close="skillOpen = false"
       />
 
       <div v-if="chat.pendingImages.length || chat.pendingDocs.length" class="composer-attach">
@@ -222,6 +361,15 @@ async function onFilesChange(e) {
         </div>
       </div>
 
+      <!-- 选中技能后挂在输入框上方：发完保留，连续追问同一个技能是常态 -->
+      <div v-if="selectedSkill" class="composer-skill">
+        <AppIcon name="sparkle" :size="13" class="composer-skill-icon" />
+        <span class="composer-skill-name">{{ selectedSkill.title }}</span>
+        <button class="composer-skill-remove" title="取消技能" @click="clearSkill">
+          <AppIcon name="close" :size="11" />
+        </button>
+      </div>
+
       <div class="composer-row">
         <button
           class="composer-icon plus-btn"
@@ -237,8 +385,9 @@ async function onFilesChange(e) {
           v-model="text"
           class="composer-input"
           rows="1"
-          placeholder="询问 Job Copilot"
-          @input="autosize"
+          placeholder="询问 Job Copilot，输入 / 选择技能"
+          @input="onInput"
+          @focus="onFocus"
           @keydown="onKeydown"
         />
 

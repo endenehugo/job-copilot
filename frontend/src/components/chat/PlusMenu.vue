@@ -2,15 +2,23 @@
 import { onBeforeUnmount, onMounted } from 'vue'
 import AppIcon from '../shell/AppIcon.vue'
 
-const emit = defineEmits(['close', 'pick-image', 'open-docs', 'open-kb'])
+const emit = defineEmits(['close', 'pick-image', 'open-docs', 'open-kb', 'open-skills'])
 
-// 菜单只放"往输入框里塞东西"的动作：图片/简历上传、资料库、知识库。
+// 菜单只放"往输入框里塞东西"的动作：图片/简历上传、资料库、技能、知识库。
 // 三类任务（模拟面试 / JD 分析 / 项目优化）已移到左侧导航，这里不再重复，
 // 否则同一个动作有两个入口，用户还得判断有什么区别。
 const GROUPS = [
   [
     { icon: 'image', title: '添加照片和文件', desc: '图片、PDF / Word 简历均可', act: () => emit('pick-image') },
     { icon: 'folder', title: '从资料库添加', desc: '查看已上传文档与简历版本', act: () => emit('open-docs') },
+  ],
+  [
+    {
+      icon: 'sparkle',
+      title: '选择技能',
+      desc: '按固定流程处理岗位匹配、经历改写等任务',
+      act: () => emit('open-skills'),
+    },
   ],
   [{ icon: 'library', title: '知识库', desc: '管理题库与八股条目', act: () => emit('open-kb') }],
 ]

@@ -26,14 +26,13 @@ class SkillTool(BaseTool):
     name: str = "load_skill"
     description: str = (
         "加载内置求职技能的完整操作指南（来自 ASu-skills）。"
-        "当用户任务匹配某个技能场景时（岗位匹配分析 job-match、简历重写 great-resume、"
-        "制作 HTML 简历 make-resume、模拟面试深挖 interview、项目讲解与面经 project-guide、"
-        "开发过程证据整理 evidence-recap、GitHub issue 贡献 contributor、"
-        "求职申请表填写 job-apply、招聘邮件与投递追踪 offer），"
+        "当用户任务匹配某个技能场景时（岗位匹配判断 job-match、简历经历改写 great-resume、"
+        "项目讲解与面经 project-guide、开发过程证据整理 evidence-recap），"
         "必须先调用本工具加载对应指南，再严格按指南执行。"
+        "制作 HTML 简历请用 resume_generate_tool，模拟面试请用 mock_interview_tool——"
+        "这两个能力已内置在工具里，不要 load_skill。"
         "参数 skill_name 为技能名称；不确定有哪些技能时，可传 skill_name='list' 查看目录。"
-        "SKILL.md 中提到某个 reference（如 make-resume 的 references/default-resume-template.md）时，"
-        "把路径传进 reference 参数即可读取该细化规则。"
+        "SKILL.md 中提到某个 reference 时，把路径传进 reference 参数即可读取该细化规则。"
     )
     args_schema: Type[BaseModel] = LoadSkillInput
 
@@ -43,7 +42,7 @@ class SkillTool(BaseTool):
             reference = (kwargs.get("reference") or "").strip()
             if not skill_name or skill_name.lower() == "list":
                 skills = skill_loader.list_skills()
-                lines = [f"- {s['name']}：{s['description'][:80]}" for s in skills]
+                lines = [f"- {s['name']}：{s['summary']}" for s in skills]
                 return "可用技能列表：\n" + "\n".join(lines)
             if reference:
                 return skill_loader.load_reference(skill_name, reference)

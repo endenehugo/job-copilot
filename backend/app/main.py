@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, conversations, documents, exports, interviews, jobs, knowledge, models, resume_generation, resumes, system
+from app.api import auth, conversations, documents, exports, interviews, jobs, knowledge, models, resume_generation, resumes, skills, system
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.response import ok
@@ -69,6 +69,7 @@ register_exception_handlers(app)
 app.include_router(system.router)
 app.include_router(auth.router)
 app.include_router(models.router)
+app.include_router(skills.router)
 app.include_router(conversations.router)
 app.include_router(conversations.image_router)
 app.include_router(documents.router)

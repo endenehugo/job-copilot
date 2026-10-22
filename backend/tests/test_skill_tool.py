@@ -18,12 +18,21 @@ def real_skills_root():
     ResourceUtils._RESOURCE_PATH = old
 
 
-def test_catalog_contains_nine_asu_skills(real_skills_root):
-    skills = list_skills()
-    names = {s["name"] for s in skills}
+def test_list_skills_hides_module_owned_and_unextendable(real_skills_root):
+    """interview / make-resume 由专用模块承接，job-apply / contributor 后端跑不了，
+    offer 没有对应存储与视图——这五类不进接口、也不进系统提示的技能目录。"""
+    names = {s["name"] for s in list_skills()}
+    assert names == {"job-match", "great-resume", "project-guide", "evidence-recap"}
+    for s in list_skills():
+        assert s["title"] and s["group"] and s["summary"], f"{s['name']} 缺展示字段"
+
+
+def test_list_skills_all_includes_nine(real_skills_root):
+    """全量模式（体检脚本用）仍能看到全部 9 个技能。"""
+    names = {s["name"] for s in list_skills(visible_only=False)}
     assert {"job-match", "great-resume", "make-resume", "interview", "offer",
             "project-guide", "evidence-recap", "contributor", "job-apply"} <= names
-    for s in skills:
+    for s in list_skills(visible_only=False):
         assert s["description"], f"{s['name']} 缺少 description"
 
 
@@ -49,21 +58,33 @@ def test_skill_tool_errors_as_string(real_skills_root):
 def test_skill_tool_list_mode(real_skills_root):
     tool = SkillTool()
     result = tool.invoke({"skill_name": "list"})
-    assert "job-match" in result and "offer" in result
+    assert "job-match" in result and "great-resume" in result
+    assert "offer" not in result
 
 
 def test_catalog_prompt_builds_lines(real_skills_root):
     prompt = catalog_prompt()
     assert "- job-match：" in prompt
-    assert prompt.count("\n") >= 8
+    # 4 个可见技能 => 3 个换行
+    assert prompt.count("\n") >= 3
+    assert "make-resume" not in prompt and "interview" not in prompt and "offer" not in prompt
 
 
-def test_agent_system_prompt_is_template_safe(real_skills_root):
-    """回归：技能描述含 {简称} 等花括号文本时，系统提示必须转义，
-    否则 ChatPromptTemplate 会把它们当成模板变量，所有 agent 请求报错。"""
+def test_agent_system_prompt_is_template_safe(real_skills_root, monkeypatch):
+    """回归：技能摘要含 {简称} 等花括号文本时，系统提示必须转义，
+    否则 ChatPromptTemplate 会把它们当成模板变量，所有 agent 请求报错。
+
+    摘要现在是 SKILL_META 手写的，本身不含花括号，所以这里造一个含花括号的
+    技能目录来守住这条防线（将来新增技能写了个模板占位符就会踩到）。
+    """
     from langchain_core.prompts import ChatPromptTemplate
 
     from app.services.conversation_chat_service import build_agent_system_prompt
+    from app.utils import skill_loader
+
+    monkeypatch.setattr(
+        skill_loader, "catalog_prompt", lambda: "- fake-skill：生成 导学-{简称}.md"
+    )
 
     system = build_agent_system_prompt()
     prompt = ChatPromptTemplate.from_messages([
@@ -71,6 +92,6 @@ def test_agent_system_prompt_is_template_safe(real_skills_root):
         ("human", "{query}"),
     ])
     rendered = prompt.invoke({"query": "测试"}).to_messages()[0].content
-    assert "job-match" in rendered
+    assert "fake-skill" in rendered
     # 转义后花括号应原样保留在渲染结果里
     assert "{简称}" in rendered

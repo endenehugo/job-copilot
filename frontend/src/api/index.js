@@ -14,6 +14,11 @@ export const modelsApi = {
   list: () => client.get('/models'),
 }
 
+// 内置技能清单（标题/分组/一句话说明），输入框的技能面板用
+export const skillsApi = {
+  list: () => client.get('/skills'),
+}
+
 export const conversationApi = {
   create: (data) => client.post('/conversation/create', data),
   list: (limit = 50) => client.get('/conversation/list', { params: { limit } }),

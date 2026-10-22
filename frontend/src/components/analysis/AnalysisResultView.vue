@@ -4,11 +4,13 @@ import { ElMessage } from 'element-plus'
 import { exportApi, notifyError } from '../../api'
 import { downloadMarkdown } from '../../utils/clipboard'
 import { useAnalysisStore } from '../../stores/analysis'
+import { useChatStore } from '../../stores/chat'
 import { useConversationStore } from '../../stores/conversation'
 
 // 主区 JD 分析视图：点击会话树的分析子节点后展示全量结果。
 // 数据源为 /job/analysis/detail，与 latest 同构（扁平结构），复用旧 JdPanel 的渲染逻辑。
 const analysis = useAnalysisStore()
+const chat = useChatStore()
 const conv = useConversationStore()
 const exporting = ref(false)
 
@@ -74,6 +76,17 @@ async function onExport() {
 function fmt(ts) {
   return (ts || '').replace('T', ' ').slice(0, 16)
 }
+
+// 分数只够"快速扫描"，值不值得投要靠证据矩阵。这里把 JD 原文一起带进聊天，
+// 不依赖检索（粘贴的 JD 不一定进了会话文档库），用户按回车前还能改。
+function onDeepAnalyze() {
+  const jdText = (analysis.analysis?.jd_text || '').trim()
+  const text = jdText
+    ? `用 job-match 判断这个岗位值不值得投。\n\nJD 原文：\n${jdText}`
+    : '用 job-match 判断这个岗位值不值得投。'
+  chat.presetComposer({ skill: 'job-match', text })
+  conv.backToConversation()
+}
 </script>
 
 <template>
@@ -85,6 +98,7 @@ function fmt(ts) {
           <span class="time-hint">{{ fmt(analysis.analysis?.created_at) }}</span>
         </span>
         <span class="head-actions">
+          <el-button size="small" type="primary" plain @click="onDeepAnalyze">用 job-match 深入判断</el-button>
           <el-button size="small" :loading="exporting" @click="onExport">导出</el-button>
           <el-button size="small" @click="conv.backToConversation()">返回会话</el-button>
         </span>

@@ -17,6 +17,9 @@ class ChatRequest(BaseModel):
     image_urls: list[str] = []
     # 本次请求使用的模型；空串 = 服务端按角色取默认值，越权模型由服务端 400
     model: str = ""
+    # 用户在输入框显式选择的技能名；空串 = 交给模型自行判断。
+    # 非空时服务端在系统提示后插入该技能的指南，且不再让模型 load_skill。
+    skill: str = ""
 
 
 class DeleteConversationRequest(BaseModel):

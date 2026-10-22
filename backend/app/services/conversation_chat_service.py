@@ -181,7 +181,45 @@ class ConversationChatService:
             user_content,
         )
 
-    def chat(self, conversation_id: str, query: str, mode: str = "agent", image_urls: list[str] | None = None) -> dict:
+    # 技能指南注入上限：最长的 project-guide 约 13.4k 字符，留一点余量
+    _MAX_SKILL_CHARS = 14000
+
+    def _apply_skill(self, messages: list, skill: str) -> list:
+        """把用户显式选择的技能指南插到系统提示之后。
+
+        这里是**消息内容**，不是 ChatPromptTemplate 的模板文本，花括号不需要转义
+        （build_agent_system_prompt 里的 .replace("{{") 是给模板用的，别照抄）。
+        指南已随请求带入，因此明确禁止模型再调 load_skill——省一轮工具调用。
+        """
+        if not skill:
+            return messages
+        try:
+            document = skill_loader.load_skill(skill)
+        except (FileNotFoundError, ValueError) as exc:
+            # 技能文件缺失/名字非法时降级为"不注入"，不要让整条对话失败
+            logger.warning("技能 %s 加载失败，本次不注入: %s", skill, exc)
+            return messages
+
+        if skill == "make-resume":
+            # 系统提示已规定简历要用 resume_generate_tool，注入全文只会和模板规则打架
+            body = (
+                "【本次任务技能】用户选择了「制作简历文件」。"
+                "直接调用 resume_generate_tool 生成并落盘，不要调用 load_skill，"
+                "也不要把 HTML 源码贴进回答。"
+            )
+        else:
+            if len(document) > self._MAX_SKILL_CHARS:
+                document = document[: self._MAX_SKILL_CHARS] + "\n\n（指南过长，已截断）"
+            meta = skill_loader.skill_meta(skill)
+            body = (
+                f"【本次任务技能】用户显式选择了技能 `{skill}`（{meta['title']}）。\n"
+                "完整操作指南已附在下方，请严格按它组织回答，不要再调用 load_skill。\n"
+                "如果用户这个问题与该技能明显无关，先用一句话确认是否仍按该技能处理，不要硬套。\n\n"
+                + document
+            )
+        return [messages[0], SystemMessage(content=body), *messages[1:]]
+
+    def chat(self, conversation_id: str, query: str, mode: str = "agent", image_urls: list[str] | None = None, skill: str = "") -> dict:
         (
             normalized_mode,
             effective_query,
@@ -204,6 +242,7 @@ class ConversationChatService:
                 "history": self._build_history(compressed_history),
                 "context": context,
             }).to_messages()
+            prompt_messages = self._apply_skill(prompt_messages, skill)
 
             if normalized_mode == "agent":
                 answer, files, tool_warnings = self._invoke_agent(prompt_messages, effective_query)
@@ -244,7 +283,7 @@ class ConversationChatService:
             "warnings": tool_warnings,
         }
 
-    def chat_stream(self, conversation_id: str, query: str, mode: str = "agent", image_urls: list[str] | None = None):
+    def chat_stream(self, conversation_id: str, query: str, mode: str = "agent", image_urls: list[str] | None = None, skill: str = ""):
         """流式问答生成器，产出 SSE 事件：meta -> delta* -> sources -> files -> done -> verification。
 
         注意 verification 排在 done 之后：上下文校验要再跑一次 LLM（实测 3~8 秒），
@@ -284,6 +323,7 @@ class ConversationChatService:
                 "history": self._build_history(compressed_history),
                 "context": context,
             }).to_messages()
+            prompt_messages = self._apply_skill(prompt_messages, skill)
 
             if normalized_mode == "agent":
                 streamed_text = ""
