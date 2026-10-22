@@ -167,6 +167,13 @@ onBeforeUnmount(() => {
       <el-drawer v-model="kbOpen" title="知识库" size="380px" class="side-drawer">
         <KnowledgePanel />
       </el-drawer>
+
+      <!-- 工信部要求：首页底部展示备案号并链接到备案系统 -->
+      <footer class="site-footer">
+        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">
+          冀ICP备2026046653号
+        </a>
+      </footer>
     </main>
   </div>
 </template>

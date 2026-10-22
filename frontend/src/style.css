@@ -595,6 +595,29 @@ button {
   overflow: hidden;
 }
 
+/* 页脚：只承载 ICP 备案号。定高、不参与 flex 伸缩，
+   否则会跟 main-area 抢空间，把聊天区挤到不可滚动的临界状态 */
+.site-footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  background: var(--canvas);
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-2);
+  user-select: none;
+}
+.site-footer a {
+  color: var(--text-2);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+.site-footer a:hover {
+  color: var(--text-1);
+}
+
 /* 聊天列：消息与输入卡共用 768px 内容宽 */
 .thread {
   flex: 1;
