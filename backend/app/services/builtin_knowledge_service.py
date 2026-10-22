@@ -8,6 +8,7 @@ from datetime import datetime
 from langchain_community.embeddings import dashscope
 from langchain_community.vectorstores import FAISS
 
+from app.core.config import settings
 from app.repositories import DatabaseManager
 from app.repositories.knowledge_entry_repository import KnowledgeEntryRepository
 from app.services.knowledge_review_service import KnowledgeReviewService
@@ -570,20 +571,42 @@ class BuiltinKnowledgeService:
         db.save_local(self._get_index_dir())
         self._db = db
 
-    def retrieve(self, query: str, k: int = 3, category: str | None = None) -> list[dict]:
-        """检索内置知识库"""
+    def retrieve(
+        self,
+        query: str,
+        k: int = 3,
+        category: str | None = None,
+        score_threshold: float | None = None,
+    ) -> list[dict]:
+        """检索内置知识库。
+
+        用 ``similarity_search_with_relevance_scores`` 直接拿真实分数：旧实现走
+        ``similarity_score_threshold`` 的 retriever，langchain 过滤后返回的是纯 Document，
+        ``getattr(doc, "score", 0)`` **恒为 0** —— 阈值看着有、实际无法二次过滤，
+        前端展示的分数也全是 0（2026-10-22 实测：真实分 0.33~0.34 的弱相关条目照样注入）。
+
+        Args:
+            score_threshold: 相关性门槛；None 取 settings.builtin_kb_score_threshold。
+                用户主动搜知识库（/knowledge/search）可传更宽松的值，对话注入用默认值。
+        """
+        if not settings.builtin_kb_enabled:
+            return []
+
         db = self._load_db()
         if db is None:
             return []
 
-        retriever = db.as_retriever(
-            search_type="similarity_score_threshold",
-            search_kwargs={"k": k * 2, "score_threshold": 0.3},
-        )
-        docs = retriever.get_relevant_documents(query)
+        threshold = settings.builtin_kb_score_threshold if score_threshold is None else score_threshold
+        try:
+            pairs = db.similarity_search_with_relevance_scores(query, k=k * 2)
+        except Exception as exc:  # 索引为空/维度不匹配时不让整条问答链路挂掉
+            logger.warning("内置知识库检索失败: %s", exc)
+            return []
 
         results = []
-        for doc in docs:
+        for doc, score in pairs:
+            if score is None or score < threshold:
+                continue
             metadata = doc.metadata or {}
             if category and metadata.get("category") != category:
                 continue
@@ -591,7 +614,8 @@ class BuiltinKnowledgeService:
                 "title": metadata.get("title", ""),
                 "category": metadata.get("category", ""),
                 "content": doc.page_content,
-                "score": getattr(doc, "score", 0),
+                # 真实相关性分数（0~1），供前端展示与调用方判断
+                "score": round(float(score), 4),
             })
             if len(results) >= k:
                 break

@@ -59,7 +59,9 @@ class DocumentIndexServiceTest(unittest.TestCase):
 
         context = service.get_context("conv_1", "test.txt里面有什么")
 
-        self.assertEqual(context, "test.txt里面有说明")
+        # 上下文现在按来源分区：用户文档要带"事实来源"标题，和内置知识库区分开
+        self.assertIn("test.txt里面有说明", context)
+        self.assertIn("用户上传的文档", context)
         # 混合检索下向量路取 limit*2=8 条候选参与合并重排
         self.assertEqual(
             conversation_db.calls,

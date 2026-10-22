@@ -160,7 +160,7 @@ class DocumentIndexService:
                 docs = public_retriever.get_relevant_documents(query)
 
         docs = self._supplement_with_builtin_knowledge(docs, query)
-        return "\n\n".join(doc.page_content for doc in docs)
+        return self._format_context(docs)
 
     def get_context_with_details(self, conversation_id: str, query: str, limit: int = 4) -> dict:
         """获取检索上下文及详细引用信息。"""
@@ -180,7 +180,7 @@ class DocumentIndexService:
         docs = self._supplement_with_builtin_knowledge(docs, query)
 
         return {
-            "context": "\n\n".join(doc.page_content for doc in docs),
+            "context": self._format_context(docs),
             "source": source,
             "documents": [
                 {
@@ -195,15 +195,24 @@ class DocumentIndexService:
             ],
         }
 
-    def _supplement_with_builtin_knowledge(self, docs: list[Document], query: str) -> list[Document]:
-        """内置知识库常驻补充：无论会话/公共索引是否命中，都追加最相关的 Top-2 条目。
+    # 内置知识库条目的来源标记：用于把"通用方法论"和"用户真实经历"分区。
+    # 不加类型注解，避免被 dataclass 当成字段。
+    _BUILTIN_KB_SOURCE = "builtin_knowledge_base"
 
-        知识库条目带标题作为来源名，供引用与来源面板展示。
+    def _supplement_with_builtin_knowledge(self, docs: list[Document], query: str) -> list[Document]:
+        """内置知识库补充：命中相关性门槛才追加 Top-K，写简历类任务一律不注入。
+
+        2026-10-22 之前是「无论命中与否都追加 Top-2」，而门槛只有 0.3，
+        拦不住弱相关条目（实测问「介绍本 Job Copilot 项目」会命中「Flask 项目结构模式」，
+        真实相关性 0.336）。后果是这些通用知识被模型当成了用户经历写进简历。
+        现在两道闸：相关性门槛 + 简历任务直接跳过。
         """
-        if self.builtin_knowledge_service is None:
+        if self.builtin_knowledge_service is None or not settings.builtin_kb_enabled:
+            return docs
+        if self._is_resume_task(query):
             return docs
 
-        results = self.builtin_knowledge_service.retrieve(query, k=2)
+        results = self.builtin_knowledge_service.retrieve(query, k=settings.builtin_kb_top_k)
         if not results:
             return docs
 
@@ -212,13 +221,65 @@ class DocumentIndexService:
                 page_content=item.get("content", ""),
                 metadata={
                     "original_name": item.get("title") or "内置知识库",
-                    "source": "builtin_knowledge_base",
+                    "source": self._BUILTIN_KB_SOURCE,
                     "score": item.get("score"),
                 },
             )
             for item in results
         ]
         return docs + kb_docs
+
+    @staticmethod
+    def _is_resume_task(query: str) -> bool:
+        """是否为「写/改简历」类任务。
+
+        这类任务只该用用户提供的真实经历；注入通用知识等于给模型递编造素材。
+        """
+        keywords = [
+            item.strip().lower()
+            for item in settings.builtin_kb_resume_block_keywords.split(",")
+            if item.strip()
+        ]
+        text = (query or "").lower()
+        return any(kw in text for kw in keywords)
+
+    def _format_context(self, docs: list[Document]) -> str:
+        """把用户文档与内置知识库**分区**拼接，而不是简单 join。
+
+        两者性质不同：用户文档是"候选人的真实经历"，内置知识库是"通用方法论"。
+        混成一段时模型无法区分，会把后者当经历写进简历（实测出现过用户从未提供的
+        「企业级 AI 智能问答平台」）。分区并显式声明边界后才能靠 prompt 约束兜住。
+        """
+        user_docs = [
+            d for d in docs if self._doc_meta(d).get("source") != self._BUILTIN_KB_SOURCE
+        ]
+        kb_docs = [
+            d for d in docs if self._doc_meta(d).get("source") == self._BUILTIN_KB_SOURCE
+        ]
+
+        parts: list[str] = []
+        if user_docs:
+            parts.append(
+                "===== 用户上传的文档（事实来源，可直接引用）=====\n"
+                + "\n\n".join(getattr(d, "page_content", "") for d in user_docs)
+            )
+        if kb_docs:
+            titles = "、".join(
+                self._doc_meta(d).get("original_name") or "内置知识库" for d in kb_docs
+            )
+            parts.append(
+                "===== 内置知识库参考（通用方法论，不是用户的真实经历）=====\n"
+                f"条目：{titles}\n"
+                "这些内容只能用于解释方法、给建议或补充背景知识；"
+                "严禁把其中的项目、公司、数字、技术栈当作用户的经历引用或写进简历。\n"
+                + "\n\n".join(getattr(d, "page_content", "") for d in kb_docs)
+            )
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _doc_meta(doc: Any) -> dict:
+        """安全取 metadata：测试替身与自定义 Document 未必带这个属性。"""
+        return getattr(doc, "metadata", None) or {}
 
     # ============================================================
     # 混合检索（向量检索 + BM25 关键词检索 + Reranking）

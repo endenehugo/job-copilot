@@ -147,6 +147,18 @@ class Settings(BaseSettings):
     llm_rerank_char_limit: int = 300
     rerank_rrf_k: int = 60
 
+    # 内置知识库（通用求职知识）的注入门槛。
+    # 它和用户上传的文档性质不同：前者是"方法参考"，后者才是"候选人的真实经历"，
+    # 混在一起会让模型把通用知识当成用户经历写进简历（2026-10-22 实测：生成的简历里
+    # 出现了用户从未提供过的「企业级 AI 智能问答平台」）。
+    # 实测「介绍本 Job Copilot 项目」这类完全无关的 query 也能命中 0.33~0.34 分，
+    # 所以 0.3 的旧阈值形同虚设；0.55 能把这类弱相关条目挡掉。
+    builtin_kb_enabled: bool = True
+    builtin_kb_score_threshold: float = 0.55
+    builtin_kb_top_k: int = 2
+    # 命中该词的任务视为"写简历/改简历"，此时不再注入任何内置知识库条目
+    builtin_kb_resume_block_keywords: str = "简历,履历,resume"
+
     resources_root: str = str(_BACKEND_ROOT / "resources")
 
     def model_post_init(self, __context) -> None:

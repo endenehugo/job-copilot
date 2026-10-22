@@ -78,7 +78,12 @@ def query_knowledge(
         return fail("query 参数不能为空", code=400)
 
     results = get_builtin_knowledge_service().retrieve(
-        query, k=k, category=category.strip() or None
+        query,
+        k=k,
+        category=category.strip() or None,
+        # 用户主动搜知识库：放宽门槛（对话注入用 settings 里更严的默认值，
+        # 否则弱相关条目会被当作"用户经历"混进简历）
+        score_threshold=0.3,
     )
     return ok({"results": results, "total": len(results)})
 
