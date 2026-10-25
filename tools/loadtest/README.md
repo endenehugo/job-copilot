@@ -99,7 +99,7 @@ $prefix = "reports\$stamp\$stage"
 
 ### AI 请求（默认禁用）
 
-AI 只单独运行 `locustfile.py`，不可与基础场景混用。默认每虚拟用户只调用一次 `/conversation/chat`，最多 2 用户，不含自动阶梯：
+AI 只单独运行 `locustfile.py`（或下一节的三阶段脚本），不可与基础场景混用。默认每虚拟用户只调用一次 `/conversation/chat`，最多 2 用户，不含自动阶梯：
 
 ```powershell
 $env:LT_ENABLE_AI = "1"
@@ -110,6 +110,73 @@ New-Item -ItemType Directory -Force -Path "reports\$stamp" | Out-Null
 ```
 
 必须先确认模型余额、限流策略和用户输入是合成数据。`memory` 仍会产生外部模型调用费用；后端 `llm_request_timeout=60`、`llm_max_retries=2`，且可能启用模型 fallback，所以一次 Locust 请求可能产生多次上游调用；客户端超时也不保证服务端立即停止。`rag` 需明确测试文档/索引；`agent` 可能触发工具、外部搜索及文件副作用，需额外设置 `LT_ENABLE_AGENT=1`，不得拿它当纯 HTTP 基准。压测机无法拆出供应商耗时；没有应用侧 trace、DB query timing 和 pool metrics 时，报告应明确写“端到端”。
+
+### AI 三阶段脚本（推荐）
+
+按“先 1 人冒烟 → 再 2 人低并发 → RAG/Agent 各自独立”的顺序，每个阶段一个脚本，共用 `ai_common.py`。每个阶段只运行一次，不自动升压；确认上一阶段稳定后手动进入下一阶段。三者都要求 `LT_ENABLE_AI=1`，并在 `support.py` 的主机白名单、全局限速（`LT_AI_MAX_RPS` ≤ 1）、≤120 秒、spawn rate ≤ 1 之上叠加各阶段限制。
+
+| 阶段 | 脚本 | 用户 × 请求 | 验证目标 | 立即停止条件 |
+|---|---|---|---|---|
+| 1 memory 冒烟 | `locustfile_ai_stage1.py` | 固定 1 × 1 | 模型调用、响应结构、超时处理 | 任意一次失败 |
+| 2 memory 低并发 | `locustfile_ai_stage2.py` | 固定 2 × 5（`LT_AI_MAX_REQUESTS_PER_USER` 1–10） | P95、错误率、模型超时、服务器响应 | 连续 2 次 chat 失败 |
+| 3 RAG 或 Agent | `locustfile_ai_stage3.py` | 默认 1 × 1（最多 3 次/人）；2 用户需 `LT_STAGE3_CONFIRM_2_USERS=YES` | 检索命中、工具链、副作用可控 | 任意一次失败 |
+
+所有阶段遇到 HTTP 429 都会立即停止；停止后仍会执行 `[check]` 健康检查和 `[cleanup]` 删会话。被拒绝的配置（用户数不符、主机不在白名单、缺少确认变量）在发送任何业务请求前以非零退出码结束。
+
+```powershell
+$env:LT_ENABLE_AI = "1"
+$stamp = Get-Date -Format "yyyyMMdd"; New-Item -ItemType Directory -Force -Path "reports\$stamp" | Out-Null
+$locust = ".\.venv-loadtest\Scripts\locust.exe"
+
+# 阶段 1
+& $locust -f tools/loadtest/locustfile_ai_stage1.py --headless --csv "reports\$stamp\ai-s1" --csv-full-history --html "reports\$stamp\ai-s1.html"
+
+# 阶段 2（阶段 1 稳定后）；每 5 秒额外探测一次 /system/health，行名 [probe]
+& $locust -f tools/loadtest/locustfile_ai_stage2.py --headless --csv "reports\$stamp\ai-s2" --csv-full-history --html "reports\$stamp\ai-s2.html"
+
+# 阶段 3：RAG 与 Agent 分两次独立运行，必须显式指定 LT_MODE
+$env:LT_MODE = "rag"
+& $locust -f tools/loadtest/locustfile_ai_stage3.py --headless --csv "reports\$stamp\ai-s3-rag" --html "reports\$stamp\ai-s3-rag.html"
+$env:LT_MODE = "agent"; $env:LT_ENABLE_AGENT = "1"
+& $locust -f tools/loadtest/locustfile_ai_stage3.py --headless --csv "reports\$stamp\ai-s3-agent" --html "reports\$stamp\ai-s3-agent.html"
+```
+
+每个 chat 请求会检查：HTTP 状态与 `code == "success"`、`message == data.answer`、`data` 的 `answer/original_answer/conversation/verification/sources/files` 字段、消息已落库、回答非空且不是兜底文案、未降级（`degraded`）。失败按前缀分类，`*_failures.csv` 与结束时的汇总都按这些前缀计数：
+
+| 前缀 | 含义 |
+|---|---|
+| `E_TIMEOUT` / `E_CONN` | 客户端读/连接超时、连接失败（读超时用 `LT_AI_READ_TIMEOUT`，默认 120 秒） |
+| `E_SLOW` | 回答成功但耗时超过预算（memory 60s、rag 90s、agent 100s，`LT_SLOW_MS` 可改），说明上游模型超时/重试已发生 |
+| `E_FALLBACK` / `E_EMPTY` / `E_DEGRADED` | 模型无内容的兜底文案、回答过短、后端标记降级 |
+| `E_HTTP_429` / `E_HTTP_5XX` / `E_BUSINESS` | 限流/额度、服务端错误、业务码非 success |
+| `E_CONTRACT` | 响应结构或消息落库不符合契约 |
+| `E_SOURCES` / `E_CONTENT` / `E_SIDE_EFFECT` | RAG 没有检索到来源、回答缺少预期关键字、RAG/Agent 返回了文件产物 |
+
+阶段 3 的细节：
+
+- **RAG**：默认 `LT_RAG_SOURCE=upload`，每个用户先上传一份合成 txt（`[setup] POST /document/upload`，1 次 embedding），再提问并要求来源里出现该文档和预期数字。一次 RAG 提问含检索、listwise 重排、回答、引用校验，通常是多次模型调用。`LT_RAG_SOURCE=builtin` 不上传，只检索内置知识库，没有文件写入。
+- **Agent**：默认问题只会触发无副作用的 `multiply_tool`；若响应里出现 `files` 记为 `E_SIDE_EFFECT`。模型仍可能自行选择其他工具，运行前后请核对服务端日志与 `generated_docs`。
+- 自定义 `LT_QUERY` 时不再套用默认关键字检查，可用 `LT_EXPECT=a,b`（命中任一）指定。
+
+阶段脚本新增的环境变量：
+
+| 环境变量 | 默认值 | 说明 |
+|---|---|---|
+| `LT_AI_MAX_REQUESTS_PER_USER` | 阶段 1：1；阶段 2：5；阶段 3：1 | 每用户 chat 次数，各阶段有不同上限 |
+| `LT_AI_THINK_TIME` | 1（阶段 2 为 3）秒 | 同一用户两次 chat 的间隔 |
+| `LT_AI_STOP_AFTER_FAILURES` | 1 / 2 / 1 | 连续失败多少次停止（只有成功的 chat 才会清零） |
+| `LT_SLOW_MS` | 按模式 | 判定 `E_SLOW` 的耗时预算 |
+| `LT_HEALTH_PROBE_INTERVAL` | 阶段 2：5；其余 0 | 健康探针间隔（5–60 秒，0 关闭）；探针不占用全局限速 |
+| `LT_RAG_SOURCE` / `LT_EXPECT` | `upload` / 按场景 | 仅阶段 3 |
+
+读结果时：
+
+- 以 `POST /conversation/chat [模式]` 行为准；Aggregated 行混有 `[setup]`、`[cleanup]`、`[check]`、`[probe]`，不能代表模型延迟。
+- 脚本结束时输出汇总，加 `--csv` 时同时写入 `<前缀>_ai_summary.json`（结果分类、chat 的 min/P50/P95/max、超预算次数）。chat 样本不足 20 时分位数仅供参考。
+- 到达 `--run-time` 时会等待在途请求完成（`--stop-timeout` = 读超时 + 15 秒），不会把慢请求静默丢掉。
+- 服务器 CPU/内存/MySQL 仍需在服务器上按下文“服务器资源采集”记录；阶段 2 的 `[probe]` 延迟只是客户端侧的响应信号。
+
+`support.py` 的安全停止现在会设置退出码 1，并在独立 greenlet 中结束 runner：此前在 `test_start` 里被拒绝时，Locust 会空等到 `--run-time` 且以 0 退出。
 
 ## 结果与跨阶段对比
 

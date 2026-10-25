@@ -1,0 +1,20 @@
+{
+  "stage": "ai-stage1-memory-smoke",
+  "mode": "memory",
+  "users": 1,
+  "chat_requests": 1,
+  "outcomes": {
+    "setup:OK": 1,
+    "OK": 1,
+    "check:OK": 1,
+    "cleanup:OK": 1
+  },
+  "slow_over_budget": 0,
+  "slow_budget_ms": 60000,
+  "latency_ms": {
+    "min": 2088,
+    "p50": 2088,
+    "p95": 2088,
+    "max": 2088
+  }
+}

@@ -10,7 +10,7 @@ import time
 from collections import deque
 from urllib.parse import urlsplit
 
-from gevent import sleep
+from gevent import sleep, spawn
 from gevent.lock import Semaphore
 from locust import events
 
@@ -150,9 +150,18 @@ def _stop(environment, message: str) -> None:
     _APPROVED = False
     _ABORTED = True
     logger.error("压测安全停止：%s", message)
+    # 安全停止不应以退出码 0 结束，否则调用方会把“被拒绝/被熔断”误读成通过。
+    environment.process_exit_code = 1
     runner = getattr(environment, "runner", None)
     if runner is not None:
-        runner.quit()
+        # test_start 与 request 回调都跑在 Locust 管理的 greenlet 里，直接 quit() 会把当前
+        # greenlet 自己杀掉，导致在 test_start 里被拒绝时空等到 --run-time；放到独立 greenlet 执行。
+        spawn(runner.quit)
+
+
+def stop_test(environment, message: str) -> None:
+    """供阶段脚本在附加安全检查失败时撤销批准并停止本次测试。"""
+    _stop(environment, message)
 
 
 def ensure_test_allowed(environment) -> None:
