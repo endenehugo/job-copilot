@@ -1,0 +1,20 @@
+{
+  "stage": "ai-stage3-rag-agent",
+  "mode": "agent",
+  "users": 1,
+  "chat_requests": 1,
+  "outcomes": {
+    "setup:OK": 2,
+    "OK": 1,
+    "check:OK": 2,
+    "cleanup:OK": 1
+  },
+  "slow_over_budget": 0,
+  "slow_budget_ms": 100000,
+  "latency_ms": {
+    "min": 17809,
+    "p50": 17809,
+    "p95": 17809,
+    "max": 17809
+  }
+}

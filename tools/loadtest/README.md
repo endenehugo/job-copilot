@@ -119,7 +119,7 @@ New-Item -ItemType Directory -Force -Path "reports\$stamp" | Out-Null
 |---|---|---|---|---|
 | 1 memory 冒烟 | `locustfile_ai_stage1.py` | 固定 1 × 1 | 模型调用、响应结构、超时处理 | 任意一次失败 |
 | 2 memory 低并发 | `locustfile_ai_stage2.py` | 固定 2 × 5（`LT_AI_MAX_REQUESTS_PER_USER` 1–10） | P95、错误率、模型超时、服务器响应 | 连续 2 次 chat 失败 |
-| 3 RAG 或 Agent | `locustfile_ai_stage3.py` | 默认 1 × 1（最多 3 次/人）；2 用户需 `LT_STAGE3_CONFIRM_2_USERS=YES` | 检索命中、工具链、副作用可控 | 任意一次失败 |
+| 3 RAG 或 Agent | `locustfile_ai_stage3.py` | 默认 1 × 1（最多 3 次/人）；2 用户需 `LT_STAGE3_CONFIRM_2_USERS=YES` | RAG：检索命中；Agent：`resume_generate_tool` 产出且仅产出 1 个可下载文件 | 任意一次失败 |
 
 所有阶段遇到 HTTP 429 都会立即停止；停止后仍会执行 `[check]` 健康检查和 `[cleanup]` 删会话。被拒绝的配置（用户数不符、主机不在白名单、缺少确认变量）在发送任何业务请求前以非零退出码结束。
 
@@ -150,12 +150,17 @@ $env:LT_MODE = "agent"; $env:LT_ENABLE_AGENT = "1"
 | `E_FALLBACK` / `E_EMPTY` / `E_DEGRADED` | 模型无内容的兜底文案、回答过短、后端标记降级 |
 | `E_HTTP_429` / `E_HTTP_5XX` / `E_BUSINESS` | 限流/额度、服务端错误、业务码非 success |
 | `E_CONTRACT` | 响应结构或消息落库不符合契约 |
-| `E_SOURCES` / `E_CONTENT` / `E_SIDE_EFFECT` | RAG 没有检索到来源、回答缺少预期关键字、RAG/Agent 返回了文件产物 |
+| `E_SOURCES` / `E_CONTENT` | RAG 没有检索到来源（或没命中上传文档）、回答缺少预期关键字 |
+| `E_ARTIFACT` / `E_SIDE_EFFECT` | Agent 没有产出 HTML 简历、产出的文件无法下载或不是 HTML；RAG 意外返回文件，或 Agent 一次产出多于 1 个文件 |
 
 阶段 3 的细节：
 
 - **RAG**：默认 `LT_RAG_SOURCE=upload`，每个用户先上传一份合成 txt（`[setup] POST /document/upload`，1 次 embedding），再提问并要求来源里出现该文档和预期数字。一次 RAG 提问含检索、listwise 重排、回答、引用校验，通常是多次模型调用。`LT_RAG_SOURCE=builtin` 不上传，只检索内置知识库，没有文件写入。
-- **Agent**：默认问题只会触发无副作用的 `multiply_tool`；若响应里出现 `files` 记为 `E_SIDE_EFFECT`。模型仍可能自行选择其他工具，运行前后请核对服务端日志与 `generated_docs`。
+- **Agent**：测 `resume_generate_tool`。每个用户先上传一份合成简历（`[setup] POST /document/upload`），再让模型调用该工具生成 HTML 简历。通过条件是响应 `files` 里恰好 1 个 HTML，且 `[check] GET /conversation/file/{filename}` 能下载到 HTML；没有文件记 `E_ARTIFACT`，多于 1 个记 `E_SIDE_EFFECT`。
+  - 副作用（每个用户、每次 chat）：`generated_docs` 新增 1 个 HTML 并登记下载归属、新增 1 条简历生成记录；上传另写入 1 份文档、1 条简历版本记录和 1 份向量索引。删除会话时都会级联清理。
+  - 成本：一次 chat 约含 3 次模型调用（工具决策、简历结构化抽取、最终回答；抽取输出上限 6000 token）和 1 次检索 embedding，另加上传时的 1 次 embedding。
+  - 客户端超时（`E_TIMEOUT`）时后端可能稍后才落盘文件，此时**不自动删除会话**，汇总会列出会话 ID，待后端结束后手动清理（`cleanup_loadtest.py`，见上文）。
+  - 模型仍可能自行选择其他工具，运行前后请核对服务端日志与 `generated_docs`。
 - 自定义 `LT_QUERY` 时不再套用默认关键字检查，可用 `LT_EXPECT=a,b`（命中任一）指定。
 
 阶段脚本新增的环境变量：

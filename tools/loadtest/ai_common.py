@@ -42,6 +42,7 @@ logger = logging.getLogger("loadtest.ai")
 # 与后端 llm_request_timeout=60 对齐：单次模型调用超过这个耗时，说明上游超时/重试已经发生。
 DEFAULT_SLOW_MS = {"memory": 60_000, "rag": 90_000, "agent": 100_000}
 FALLBACK_MARKERS = ("这次模型没有返回内容", "这次没能给出完整回答")
+DOWNLOAD_PREFIX = "/api/v1/conversation/file/"
 CHAT_KEYS = ("answer", "original_answer", "conversation", "verification", "sources", "files")
 
 MEMORY_QUERIES = (
@@ -51,9 +52,32 @@ MEMORY_QUERIES = (
     "用一句话回答：MySQL 索引为什么通常用 B+ 树？",
     "用一句话回答：Redis 的持久化有哪两种方式？",
 )
-# 工具无副作用：multiply_tool 只做乘法。查询里不出现“生成文件/搜索网页”等会触发写盘或外网的意图。
-AGENT_QUERY = "请调用 multiply_tool 计算 37 乘以 91，只回复计算结果数字。"
-AGENT_EXPECT = ("3367",)
+# 会产生写入副作用：resume_generate_tool 会落盘 1 个 HTML、写 1 条简历生成记录并登记下载文件，
+# 均随会话删除级联清理。素材取自上传的合成简历，查询里点名工具以减少模型自行选别的工具。
+AGENT_QUERY = (
+    "请根据我上传的简历材料，调用 resume_generate_tool 生成一份 HTML 简历，"
+    "目标岗位是 Python 后端开发实习生，生成后把下载链接发给我。"
+)
+RESUME_DOC_NAME = "lt-resume-synthetic.txt"
+RESUME_DOC_TEXT = (
+    "压测合成简历（虚构人物，不含任何真实个人信息）\n\n"
+    "姓名：周明远\n"
+    "电话：000-0000-0000\n"
+    "邮箱：lt-test@example.com\n"
+    "求职意向：Python 后端开发实习生\n\n"
+    "教育经历\n"
+    "虚构理工大学 软件工程 本科 2023.09 - 2027.06\n\n"
+    "实习经历\n"
+    "星河科技（虚构公司） 后端开发实习生 2025.07 - 2025.10\n"
+    "- 使用 FastAPI 和 MySQL 开发内部工单系统接口，负责 6 个核心接口的编码与单元测试。\n"
+    "- 为工单列表接口增加索引与分页优化，接口平均耗时从 320 毫秒降到 90 毫秒。\n\n"
+    "项目经历\n"
+    "校园二手书交易平台 后端负责人 2025.03 - 2025.06\n"
+    "- 使用 Python、FastAPI、Redis 实现下单、库存扣减与订单查询，支持 200 名内测用户使用。\n"
+    "- 用 Redis 缓存热门书籍列表，缓存命中率约 85%。\n\n"
+    "专业技能\n"
+    "Python、FastAPI、MySQL、Redis、Git、Linux 基础\n"
+)
 RAG_DOC_NAME = "lt-rag-synthetic.txt"
 RAG_DOC_TEXT = (
     "压测合成资料（虚构，不含任何真实个人信息）\n\n"
@@ -91,6 +115,7 @@ class Stage:
 class Settings:
     mode: str
     rag_source: str
+    upload_doc: tuple[str, str] | None
     queries: tuple[str, ...]
     expect: tuple[str, ...]
     model: str
@@ -117,6 +142,7 @@ class RunState:
         self.streak = 0
         self.finished_users = 0
         self.query_seq = 0
+        self.kept_conversations: list[str] = []
         self.quitting = False
         self.summarized = False
         self.probe: gevent.Greenlet | None = None
@@ -160,10 +186,13 @@ def load_settings(stage: Stage) -> Settings:
 
     default_queries: tuple[str, ...] = MEMORY_QUERIES
     default_expect: tuple[str, ...] = ()
+    upload_doc: tuple[str, str] | None = None
     if mode == "agent":
-        default_queries, default_expect = (AGENT_QUERY,), AGENT_EXPECT
+        default_queries = (AGENT_QUERY,)
+        upload_doc = (RESUME_DOC_NAME, RESUME_DOC_TEXT)
     elif rag_source == "upload":
         default_queries, default_expect = (RAG_UPLOAD_QUERY,), RAG_UPLOAD_EXPECT
+        upload_doc = (RAG_DOC_NAME, RAG_DOC_TEXT)
     elif rag_source == "builtin":
         default_queries, default_expect = (RAG_BUILTIN_QUERY,), RAG_BUILTIN_EXPECT
 
@@ -184,6 +213,7 @@ def load_settings(stage: Stage) -> Settings:
     return Settings(
         mode=mode,
         rag_source=rag_source,
+        upload_doc=upload_doc,
         queries=queries,
         expect=expect,
         model=os.getenv("LT_MODEL", "").strip(),
@@ -303,6 +333,8 @@ def build_summary(stage: Stage, settings: Settings, users: int) -> dict:
         "slow_over_budget": RUN.slow,
         "slow_budget_ms": int(settings.slow_ms),
     }
+    if RUN.kept_conversations:
+        summary["kept_conversations"] = list(RUN.kept_conversations)
     if chat:
         summary["latency_ms"] = {
             "min": round(min(chat)),
@@ -326,6 +358,11 @@ def format_summary(summary: dict) -> str:
         note = "（样本不足 20，分位数仅供参考）" if summary["chat_requests"] < 20 else ""
         lines.append(
             f"端到端延迟 ms：min={latency['min']} P50={latency['p50']} P95={latency['p95']} max={latency['max']}{note}"
+        )
+    kept = summary.get("kept_conversations")
+    if kept:
+        lines.append(
+            "未自动删除的会话（客户端超时，后端可能仍在落盘文件，待其结束后手动清理）：" + ", ".join(kept)
         )
     lines.append("说明：延迟含公网 RTT 与上游模型耗时；服务器资源需按 README 另行采集。")
     return "\n".join(lines)
@@ -439,6 +476,23 @@ def _contract_error(body: dict, data: object, conversation_id: str, query: str) 
     return None
 
 
+def _artifact_error(files: list) -> str | None:
+    """Agent 阶段的预期副作用：恰好 1 个可下载的 HTML 简历，多于 1 个说明工具被重复/越权调用。"""
+    if not files:
+        return "E_ARTIFACT|resume_generate_tool produced no file"
+    if len(files) > 1:
+        return "E_SIDE_EFFECT|more than one file generated"
+    item = files[0]
+    if not (
+        isinstance(item, dict)
+        and item.get("format") == "html"
+        and str(item.get("url") or "").startswith(DOWNLOAD_PREFIX)
+        and item.get("size", 0) > 0
+    ):
+        return "E_CONTRACT|file artifact fields"
+    return None
+
+
 def _mode_error(settings: Settings, data: dict) -> str | None:
     sources, files = data["sources"], data["files"]
     if settings.mode == "memory":
@@ -453,8 +507,8 @@ def _mode_error(settings: Settings, data: dict) -> str | None:
             isinstance(item, dict) and item.get("source_name") == RAG_DOC_NAME for item in sources
         ):
             return "E_SOURCES|uploaded document not retrieved"
-    elif settings.mode == "agent" and files:
-        return "E_SIDE_EFFECT|agent generated files"
+    elif settings.mode == "agent":
+        return _artifact_error(files)
     return None
 
 
@@ -470,6 +524,7 @@ class AiChatUser(HttpUser):
 
     def on_start(self) -> None:
         self.conversation_id = ""
+        self.keep_conversation = False
         self.sent = 0
         if not _is_allowed(self.environment):
             raise StopUser()  # 拒绝原因已在 test_start 记录，这里不再发送任何业务请求
@@ -505,9 +560,13 @@ class AiChatUser(HttpUser):
         *,
         validate: Callable[[object], str | None] | None = None,
         timeout: float | None = None,
+        raw: bool = False,
         **kwargs,
     ) -> tuple[str | None, object]:
-        """setup / cleanup / check 请求：返回 (失败原因, data)，失败会同时计入熔断。"""
+        """setup / cleanup / check 请求：返回 (失败原因, data)，失败会同时计入熔断。
+
+        raw=True 用于文件下载这类不返回 JSON 信封的接口：只检查 HTTP 200，validate 收到响应文本。
+        """
         REQUEST_GATE.wait()
         started = time.perf_counter()
         with self.client.request(
@@ -518,9 +577,15 @@ class AiChatUser(HttpUser):
             catch_response=True,
             **kwargs,
         ) as response:
-            body = response_json(response)
-            reason = transport_error(response) or check_envelope(response, body)
-            data = body.get("data") if body else None
+            if raw:
+                reason = transport_error(response)
+                if reason is None and response.status_code != 200:
+                    reason = f"E_HTTP_{response.status_code}|download"
+                data = response.text if reason is None else ""
+            else:
+                body = response_json(response)
+                reason = transport_error(response) or check_envelope(response, body)
+                data = body.get("data") if body else None
             if reason is None and validate is not None:
                 reason = validate(data)
             if reason is not None:
@@ -545,6 +610,7 @@ class AiChatUser(HttpUser):
             raise StopUser()
         self.sent += 1
         started = time.perf_counter()
+        self.last_data: dict | None = None
         with self.client.post(
             "/api/v1/conversation/chat",
             json=payload,
@@ -558,8 +624,30 @@ class AiChatUser(HttpUser):
                 response.failure(reason)
         _record(self.environment, settings, "chat", reason, elapsed_ms)
 
+        if reason is None:
+            self.after_chat_ok(self.last_data)
+        elif reason.startswith("E_TIMEOUT") and settings.mode == "agent":
+            # 客户端放弃后后端可能仍在跑工具：此刻删会话，文件稍后才落盘就成了无主文件。
+            self.keep_conversation = True
+            RUN.kept_conversations.append(self.conversation_id)
+            logger.warning("agent 请求超时，保留会话 %s，请待后端结束后手动清理", self.conversation_id)
+
         if self.sent >= settings.requests_per_user:
             raise StopUser()
+
+    def after_chat_ok(self, data: dict | None) -> None:
+        """chat 成功后的附加校验；默认只有 Agent 会核对生成的文件真的能下载。"""
+        if self.settings.mode != "agent" or not data:
+            return
+        self.call_aux(
+            "GET",
+            data["files"][0]["url"],
+            "[check] GET /conversation/file/{filename}",
+            raw=True,
+            validate=lambda text: None
+            if "<html" in str(text).lower()
+            else "E_ARTIFACT|downloaded file is not html",
+        )
 
     def _chat_error(self, response, query: str, elapsed_ms: float) -> str | None:
         settings = self.settings
@@ -576,6 +664,7 @@ class AiChatUser(HttpUser):
         reason = _contract_error(body, data, self.conversation_id, query)
         if reason is not None:
             return reason
+        self.last_data = data
 
         answer = str(data["answer"]).strip()
         if len(answer) < settings.min_answer:
@@ -605,14 +694,14 @@ class AiChatUser(HttpUser):
                 if isinstance(data, dict) and data.get("status") == "ok"
                 else "E_CONTRACT|health.status",
             )
-        if self.conversation_id:
+        if self.conversation_id and not self.keep_conversation:
             self.call_aux(
                 "POST",
                 "/api/v1/conversation/delete",
                 "[cleanup] POST /conversation/delete",
                 json={"conversation_id": self.conversation_id},
             )
-            self.conversation_id = ""
+        self.conversation_id = ""
 
         RUN.finished_users += 1
         if RUN.finished_users >= int(self.environment.parsed_options.num_users):
