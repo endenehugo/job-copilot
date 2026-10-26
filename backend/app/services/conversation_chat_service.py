@@ -71,6 +71,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from app.services.conversation_store_service import ConversationStoreService
 from app.services.document_index_service import DocumentIndexService
 from app.services.context_compression_service import ContextCompressionService
+from app.services import context_compression_scheduler as compression_scheduler
 from app.services.context_verification_service import ContextVerificationService
 from app.core.config import settings
 from app.tools import MultiplyTool, WebSearchTool, WordDocumentTool, HtmlDocumentTool, JdParserTool, ResumeScoreTool, ProjectRewriteTool, MockInterviewTool, SkillTool, ResumeGenerateTool
@@ -94,10 +95,9 @@ class ConversationChatService:
         r"|(简历|文件|文档|HTML).{0,10}(已|已经).{0,6}(生成|落盘|保存|交付)"
         r"|下载链接|点击下载|文件链接"
     )
-    # 历史压缩：攒到 12 条（6 轮）才压，一次压到 8 条。两者必须分开——
-    # 只压掉溢出的 2 条时下一轮又溢出，于是每轮都多一次模型调用（线上实测 4475ms/次）。
-    _MAX_HISTORY_MESSAGES = 12  # 触发阈值
-    _COMPRESS_TARGET_MESSAGES = 8  # 压缩后保留条数
+    # 历史压缩的具体数值在 settings.history_compress_*（trigger/target/max）：
+    # 攒到 trigger 才压、一次压到 target，两者必须分开——只压掉溢出的 2 条时下一轮
+    # 又溢出，于是每轮都多一次模型调用（线上实测 4475ms/次）。
     # 工具轮上限：make-resume 需要 load_skill 取指南 -> 多块 html_document_tool 写入 -> 收尾，
     # 3 轮不够用，模型会在没落盘的情况下被强制收尾（表现就是"生成不出 HTML 文件"）。
     _MAX_TOOL_ROUNDS = 6
@@ -140,6 +140,34 @@ class ConversationChatService:
             self._agent_llm_model = model
         return self.agent_llm
 
+    def _compress_history(
+        self, conversation_id: str, history: list[dict], old_summary: str
+    ) -> tuple[list[dict], str, int, bool]:
+        """决定这次压缩是同步做还是丢后台。返回 (历史, 新摘要, 新水位, 是否已转后台)。
+
+        压缩只服务**下一轮**——本轮的 prompt 在这一步之后才组装。所以攒到阈值时把它
+        排进后台队列，本轮直接带全量历史回答：省下一次模型往返，代价是这次输入多几条
+        消息（约 150 token）。队列有硬上限兜底，见 settings.history_compress_max_messages。
+        """
+        trigger = settings.history_compress_trigger_messages
+        target = settings.history_compress_target_messages
+        # 未到阈值时 compress_history 不会调模型，直接原样返回，成本为零
+        if len(history) <= trigger or len(history) > settings.history_compress_max_messages:
+            # 超过硬上限说明用户连发、后台追不上，退回同步压缩把上下文收回来
+            result, summary, watermark = self.context_compression_service.compress_history(
+                history, old_summary=old_summary, max_messages=trigger, target_messages=target
+            )
+            return result, summary, watermark, False
+
+        submitted = compression_scheduler.schedule(conversation_id)
+        # 后台还没结果，本轮沿用旧摘要 + 全量历史
+        return (
+            self.context_compression_service.with_summary(history, old_summary),
+            old_summary,
+            0,
+            submitted,
+        )
+
     def _prepare_chat(self, conversation_id, query, mode, image_urls):
         """公共前置流程：模式归一、历史压缩、上下文检索、用户消息组装。"""
         normalized_mode = mode if mode in {"agent", "rag", "memory"} else "agent"
@@ -162,15 +190,16 @@ class ConversationChatService:
             history = self.conversation_store_service.get_messages_after(conversation_id, summarized_until_id)
 
         with span("compress") as compress_span:
-            compressed_history, new_summary, new_watermark = self.context_compression_service.compress_history(
-                history,
-                old_summary=old_summary,
-                max_messages=self._MAX_HISTORY_MESSAGES,
-                target_messages=self._COMPRESS_TARGET_MESSAGES,
+            compressed_history, new_summary, new_watermark, deferred = self._compress_history(
+                conversation_id, history, old_summary
             )
             if compress_span is not None:
-                # 水位前移 = 这次真的做了摘要（会同步多调一次小模型）
-                compress_span["attrs"].update(messages=len(history), triggered=new_watermark > 0)
+                compress_span["attrs"].update(
+                    messages=len(history),
+                    triggered=new_watermark > 0,
+                    # deferred：摘要改为后台生成，本轮用全量历史回答，不等压缩
+                    deferred=deferred,
+                )
 
         if new_summary != old_summary and new_watermark > 0:
             with span("db.summary"):

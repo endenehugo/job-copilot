@@ -96,7 +96,11 @@ class Settings(BaseSettings):
     # 简单/结构化任务（上下文压缩、事实校验、检索重排）使用的小模型。
     # 百炼免费额度按模型独立发放（每模型约 100 万 token / 90 天），
     # 把低价值高频调用分流到独立模型上，等价于免费额度扩容。
-    llm_small_model: str = "qwen3.8-flash"
+    # 2026-10-26 从 qwen3.8-flash 换成 qwen3.7-flash：按百炼官方价目（≤32K 档）
+    # 输入 0.2 / 输出 0.8 元每百万 token，比 3.8-flash 的 0.8 / 2.7 便宜 3~4 倍；
+    # 同一段 14 条历史做摘要实测 P50 1589ms → 1075ms（8 轮交替，1.48x），
+    # JSON 排序与校验判断的输出格式未变。线上压缩是该模型最大的调用方。
+    llm_small_model: str = "qwen3.7-flash"
 
     # 模型降级链：主模型报额度耗尽/欠费/模型不可用等错误时按序切换。
     # 服务端不会自动切换（见百炼官方 FAQ），该能力在客户端补齐；
@@ -173,6 +177,9 @@ class Settings(BaseSettings):
     # 攒到 trigger 才压，一次压到 target，压缩频率降到每 3 轮一次。
     history_compress_trigger_messages: int = 12
     history_compress_target_messages: int = 8
+    # 后台队列追不上的硬上限：超过它就不再异步，退回同步压缩。
+    # 用户连发时每轮只加 2 条，40 条 ≈ 20 轮，留足了后台排队的时间。
+    history_compress_max_messages: int = 40
     # 摘要正文的 token 兜底。中文摘要 120 字约 150~180 token，留一倍余量防截断。
     history_summary_max_tokens: int = 240
 

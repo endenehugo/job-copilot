@@ -357,6 +357,8 @@ def _service_with_history(n_messages):
     svc.document_index_service.get_context_with_details.return_value = {"context": "", "documents": []}
     svc.context_compression_service = MagicMock()
     svc.context_compression_service.compress_history.return_value = ([], "", 0)
+    # 后台压缩分支会调 with_summary 拼旧摘要，mock 掉也要保持"返回历史列表"的语义
+    svc.context_compression_service.with_summary.side_effect = lambda history, summary: list(history)
     svc.qa_prompt = MagicMock()
     svc.qa_prompt.invoke.return_value.to_messages.return_value = []
     llm = MagicMock()
@@ -383,16 +385,34 @@ def test_memory_chat_emits_expected_spans():
 
 
 def test_compress_span_marks_triggered_when_watermark_moves():
-    svc = _service_with_history(14)
+    # 超过硬上限（40）才会同步压缩；阈值与上限之间是后台压缩，见下一条用例
+    svc = _service_with_history(42)
     svc.context_compression_service.compress_history.return_value = ([], "新摘要", 9)
     with pt.trace_scope("chat") as t:
         svc.chat("c1", "你好吗", "memory", [])
     compress = next(s for s in t.spans if s["name"] == "compress")
-    assert compress["attrs"]["triggered"] is True and compress["attrs"]["messages"] == 14
+    assert compress["attrs"]["triggered"] is True and compress["attrs"]["messages"] == 42
+    assert compress["attrs"]["deferred"] is False
+
+
+def test_compress_is_deferred_between_threshold_and_cap(monkeypatch):
+    """攒到阈值时不再同步压：本轮直接用全量历史，只把任务排进后台。"""
+    from app.services import context_compression_scheduler as scheduler
+
+    scheduled: list[str] = []
+    monkeypatch.setattr(scheduler, "schedule", lambda conversation_id: scheduled.append(conversation_id) or True)
+    svc = _service_with_history(14)
+    with pt.trace_scope("chat") as t:
+        svc.chat("c1", "你好吗", "memory", [])
+    compress = next(s for s in t.spans if s["name"] == "compress")
+    assert compress["attrs"]["deferred"] is True and compress["attrs"]["triggered"] is False
+    assert scheduled == ["c1"]
+    # 没有同步的摘要调用（mock 的 LLM 不会产生 llm.call span，所以只看调用次数）
+    assert svc.context_compression_service.compress_history.call_count == 0
 
 
 def test_llm_call_inside_compress_has_compress_as_parent():
-    svc = _service_with_history(14)
+    svc = _service_with_history(42)
 
     def compress(history, old_summary="", max_messages=20, target_messages=None):
         pt.record_llm_call("small", 2.0)  # 压缩服务内部的摘要调用

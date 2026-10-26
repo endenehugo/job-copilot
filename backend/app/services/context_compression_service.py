@@ -26,6 +26,12 @@ class ContextCompressionService:
 
     # ---- 公开方法 ----
 
+    def with_summary(self, history: list[dict], old_summary: str) -> list[dict]:
+        """不做压缩，只把已有摘要作为系统消息拼在历史前面。"""
+        if not old_summary:
+            return list(history)
+        return [self._make_summary_msg(old_summary), *history]
+
     def compress_history(
         self,
         history: list[dict],
@@ -57,10 +63,7 @@ class ContextCompressionService:
         # 高位线停在 user 上，下一轮的 recent 就从 assistant 开始，上下文错位。
         compress_count -= compress_count % 2
         if compress_count <= 0:
-            result = []
-            if old_summary:
-                result.append(self._make_summary_msg(old_summary))
-            return (result + history, old_summary, 0)
+            return (self.with_summary(history, old_summary), old_summary, 0)
 
         compress_messages = history[:compress_count]
         recent_messages = history[compress_count:]
