@@ -92,6 +92,18 @@ def configure_http_auth(client) -> None:
         client.auth = (username, password)
 
 
+def _limit_env(name: str, default: float) -> float:
+    """按需放宽硬上限。默认值保持不变——只有显式设了环境变量才生效，
+    这样误用会在 test_start 的日志里留下"上限已放宽"的痕迹。"""
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    value = float(raw)
+    if value < 0:
+        raise ValueError(f"{name} 不能为负数")
+    return value
+
+
 def add_safety_options(
     default_scenario: str,
     scenarios: tuple[str, ...],
@@ -198,8 +210,11 @@ def install_safety_monitor() -> None:
             users = int(options.num_users)
             spawn_rate = float(options.spawn_rate)
             max_rps = float(options.max_rps)
-            max_spawn_rate = float(options.lt_max_spawn_rate)
-            max_allowed_rps = float(options.lt_max_allowed_rps)
+            # 这四个上限默认保守，压容量时才用环境变量显式放宽（见本模块 _limit_env）
+            max_spawn_rate = _limit_env("LT_MAX_SPAWN_RATE", float(options.lt_max_spawn_rate))
+            max_allowed_rps = _limit_env("LT_MAX_ALLOWED_RPS", float(options.lt_max_allowed_rps))
+            max_users = int(_limit_env("LT_MAX_USERS", 2 if options.scenario == "ai" else 30))
+            max_duration = _limit_env("LT_MAX_DURATION_S", 120 if options.scenario == "ai" else 300)
             _ABORT_WINDOW = max(1, int(os.getenv("LT_ABORT_WINDOW", "50")))
             _ABORT_FAILURE_RATE = float(os.getenv("LT_ABORT_FAILURE_RATE", "0.10"))
             _ABORT_5XX_STREAK = max(1, int(os.getenv("LT_ABORT_5XX_STREAK", "3")))
@@ -235,17 +250,33 @@ def install_safety_monitor() -> None:
             _stop(environment, "失败率阈值须在 0–1 内，P95 阈值须为非负数")
             return
 
-        max_users = 2 if options.scenario == "ai" else 30
         if users > max_users:
-            if options.scenario == "ai" or users > 40 or not options.confirm_40_users:
-                _stop(environment, f"{options.scenario} 场景最多 {max_users} 个用户；31–40 需单独人工确认")
-                return
+            _stop(environment, f"{options.scenario} 场景最多 {max_users} 个用户（上限可用 LT_MAX_USERS 放宽）")
+            return
+        if users > 40 and not options.confirm_40_users:
+            _stop(environment, "超过 40 用户需显式 --confirm-40-users（或 LT_CONFIRM_40_USERS=YES）")
+            return
 
         duration = duration_seconds(getattr(options, "run_time", None))
-        max_duration = 120 if options.scenario == "ai" else 300
         if duration is None or duration <= 0 or duration > max_duration:
-            _stop(environment, f"必须设置有限测试时长；{options.scenario} 场景上限 {max_duration} 秒")
+            _stop(
+                environment,
+                f"必须设置有限测试时长；{options.scenario} 场景上限 {max_duration} 秒（可用 LT_MAX_DURATION_S 放宽）",
+            )
             return
+
+        relaxed = [
+            f"{name}={value}"
+            for name, value in (
+                ("LT_MAX_USERS", max_users),
+                ("LT_MAX_ALLOWED_RPS", max_allowed_rps),
+                ("LT_MAX_SPAWN_RATE", max_spawn_rate),
+                ("LT_MAX_DURATION_S", max_duration),
+            )
+            if os.getenv(name, "").strip()
+        ]
+        if relaxed:
+            logger.warning("安全上限已被环境变量放宽：%s", ", ".join(relaxed))
 
         REQUEST_GATE.configure(max_rps)
         _APPROVED = True
