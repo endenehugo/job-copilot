@@ -20,6 +20,10 @@ class ContextCompressionService:
 
     _compressor_llm = None
 
+    # 摘要正文的字符上限，与 settings.history_summary_max_tokens 对应的兜底：
+    # 即使模型无视 prompt 的字数要求，也不会把几千字塞进摘要。
+    _SUMMARY_MAX_CHARS = 320
+
     # ---- 公开方法 ----
 
     def compress_history(
@@ -27,13 +31,17 @@ class ContextCompressionService:
         history: list[dict],
         old_summary: str = "",
         max_messages: int = 20,
+        target_messages: int | None = None,
     ) -> tuple[list[dict], str, int]:
         """增量压缩对话历史。
 
         Args:
             history: 水位线之后的新消息（每条需含 id 字段）
             old_summary: 上次持久化的摘要
-            max_messages: 保留的最大消息数
+            max_messages: 触发阈值，历史条数超过它才压缩
+            target_messages: 压缩后保留的条数；None 表示压到 max_messages（旧行为）。
+                与 max_messages 分开是为了控制触发频率：只压掉溢出的几条时，
+                下一轮又会溢出，于是每轮都触发一次额外的模型调用。
 
         Returns:
             (压缩后消息列表, 新摘要, 新水位线 id)
@@ -41,13 +49,19 @@ class ContextCompressionService:
             - 新摘要：合并后的摘要文本（未变化则返回 old_summary）
             - 新水位线：最后一条被压缩消息的 id（未变化则返回 0）
         """
-        if len(history) <= max_messages:
+        target = max_messages if target_messages is None else target_messages
+        compress_count = 0
+        if len(history) > max_messages:
+            compress_count = len(history) - target
+        # 消息是成对的（user + assistant），压掉奇数条会把一问一答拆开：
+        # 高位线停在 user 上，下一轮的 recent 就从 assistant 开始，上下文错位。
+        compress_count -= compress_count % 2
+        if compress_count <= 0:
             result = []
             if old_summary:
                 result.append(self._make_summary_msg(old_summary))
             return (result + history, old_summary, 0)
 
-        compress_count = len(history) - max_messages
         compress_messages = history[:compress_count]
         recent_messages = history[compress_count:]
         new_watermark = compress_messages[-1].get("id", 0)
@@ -56,8 +70,8 @@ class ContextCompressionService:
         summary_msg = self._make_summary_msg(new_summary)
 
         logger.info(
-            "增量摘要完成：旧摘要 %d 字 + %d 条新消息 → 新摘要 %d 字，水位线 → %d",
-            len(old_summary), compress_count, len(new_summary), new_watermark,
+            "增量摘要完成：旧摘要 %d 字 + %d 条新消息 → 新摘要 %d 字，保留 %d 条，水位线 → %d",
+            len(old_summary), compress_count, len(new_summary), len(recent_messages), new_watermark,
         )
         return ([summary_msg] + recent_messages, new_summary, new_watermark)
 
@@ -139,31 +153,39 @@ class ContextCompressionService:
         }
 
     def _merge_summary(self, old_summary: str, new_messages: list[dict]) -> str:
-        """将旧摘要与新溢出消息合并为更新后的摘要。"""
+        """将旧摘要与新溢出消息合并为更新后的摘要。
+
+        这段在对话的关键路径上：压缩没跑完，回答就发不出去。旧 prompt 只写"300 字以内"，
+        线上实测输出 142~383 token（均值 4475ms，比回答调用还慢一倍），所以改成结构化
+        条目清单——条目比行文省 token，也更容易让模型收住长度。max_tokens 在 _get_llm
+        里兜底，防止模型无视字数要求。
+        """
         new_text = self._format_history(new_messages)
         if not new_text:
             return old_summary
 
         llm = self._get_llm()
 
+        rules = (
+            "把对话压缩成事实清单，供后续回答引用。要求：\n"
+            "- 只输出条目，每行一条，最多 5 条，每条不超过 30 字；\n"
+            "- 只保留用户的目标/偏好、已确认的事实与数据、已经给出的结论；\n"
+            "- 不复述寒暄，不写前言、总结句或markdown标题；\n"
+            "- 没有可保留的内容时输出「无」。"
+        )
         if old_summary:
             prompt = (
-                "你已有一份对话摘要，现在需要将新的对话内容合并进去，生成更新后的摘要。\n"
-                "要求：中文，300 字以内，保留关键事实、用户需求、已得出的结论，去掉过时信息。\n\n"
+                f"{rules}\n\n把【新增对话】并入【已有摘要】，合并后的条目总数仍不超过 5 条。\n\n"
                 f"【已有摘要】\n{old_summary}\n\n"
                 f"【新增对话】\n{new_text}\n\n"
-                "更新后的摘要："
+                "更新后的清单："
             )
         else:
-            prompt = (
-                "请将以下对话内容压缩为简洁的摘要（中文，300 字以内），"
-                "保留关键事实、用户需求和已得出的结论：\n\n"
-                f"{new_text}\n\n摘要："
-            )
+            prompt = f"{rules}\n\n【对话】\n{new_text}\n\n清单："
 
         try:
             result = llm.invoke(prompt).content.strip()
-            return result[:800]
+            return result[: self._SUMMARY_MAX_CHARS]
         except Exception as exc:
             logger.warning("增量摘要生成失败，保留旧摘要: %s", exc)
             return old_summary
@@ -217,5 +239,9 @@ class ContextCompressionService:
                 model=settings.llm_small_model,
                 temperature=0.3,
                 top_p=0.5,
+                # 压缩在关键路径上，输出越长等得越久。摘要是结构化任务，不需要思考——
+                # 开着思考时思考 token 也计入 max_tokens，实测会吃掉全部额度、正文返回空串。
+                enable_thinking=False,
+                max_tokens=settings.history_summary_max_tokens,
             )
         return self._compressor_llm

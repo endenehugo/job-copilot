@@ -394,7 +394,7 @@ def test_compress_span_marks_triggered_when_watermark_moves():
 def test_llm_call_inside_compress_has_compress_as_parent():
     svc = _service_with_history(14)
 
-    def compress(history, old_summary="", max_messages=20):
+    def compress(history, old_summary="", max_messages=20, target_messages=None):
         pt.record_llm_call("small", 2.0)  # 压缩服务内部的摘要调用
         return ([], "新摘要", 9)
 

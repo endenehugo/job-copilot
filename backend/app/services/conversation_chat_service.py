@@ -94,7 +94,10 @@ class ConversationChatService:
         r"|(简历|文件|文档|HTML).{0,10}(已|已经).{0,6}(生成|落盘|保存|交付)"
         r"|下载链接|点击下载|文件链接"
     )
-    _MAX_HISTORY_MESSAGES = 12  # 历史消息压缩阈值（保留最近 6 轮逐字，更早走增量摘要）
+    # 历史压缩：攒到 12 条（6 轮）才压，一次压到 8 条。两者必须分开——
+    # 只压掉溢出的 2 条时下一轮又溢出，于是每轮都多一次模型调用（线上实测 4475ms/次）。
+    _MAX_HISTORY_MESSAGES = 12  # 触发阈值
+    _COMPRESS_TARGET_MESSAGES = 8  # 压缩后保留条数
     # 工具轮上限：make-resume 需要 load_skill 取指南 -> 多块 html_document_tool 写入 -> 收尾，
     # 3 轮不够用，模型会在没落盘的情况下被强制收尾（表现就是"生成不出 HTML 文件"）。
     _MAX_TOOL_ROUNDS = 6
@@ -160,7 +163,10 @@ class ConversationChatService:
 
         with span("compress") as compress_span:
             compressed_history, new_summary, new_watermark = self.context_compression_service.compress_history(
-                history, old_summary=old_summary, max_messages=self._MAX_HISTORY_MESSAGES
+                history,
+                old_summary=old_summary,
+                max_messages=self._MAX_HISTORY_MESSAGES,
+                target_messages=self._COMPRESS_TARGET_MESSAGES,
             )
             if compress_span is not None:
                 # 水位前移 = 这次真的做了摘要（会同步多调一次小模型）

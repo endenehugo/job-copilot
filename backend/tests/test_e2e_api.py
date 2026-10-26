@@ -913,11 +913,13 @@ class TestIncrementalSummary:
             history, old_summary=old_summary, max_messages=20
         )
 
-        assert new_watermark == 5
+        # 溢出 5 条，但消息是成对的：压奇数条会让高位线停在 user 上，
+        # 下一轮的 recent 从 assistant 开始，所以向下取偶压 4 条（水位 4，留 21 条 + 1 层摘要）
+        assert new_watermark == 4
         assert isinstance(new_summary, str)
         assert len(new_summary) > 0
         assert result[0]["role"] == "system"
-        assert len(result) == 21
+        assert len(result) == 22
 
     def test_messages_after_query(self, client):
         conv = _create_conversation(client)

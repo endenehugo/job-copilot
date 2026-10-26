@@ -166,6 +166,16 @@ class Settings(BaseSettings):
     # 命中该词的任务视为"写简历/改简历"，此时不再注入任何内置知识库条目
     builtin_kb_resume_block_keywords: str = "简历,履历,resume"
 
+    # 历史压缩的两个水位（条数按 DB 消息计，一轮问答 = 2 条）。
+    # 2026-10-26 线上实测：旧逻辑只有一个阈值兼作目标（12），每次只压掉溢出的 2 条，
+    # 于是第 8 次请求之后每轮都触发，压缩那次模型调用均值 4475ms、输出 142~383 token，
+    # 比回答调用（2243ms / 56~162 token）又慢又长。这里把"触发"和"压到多少"分开：
+    # 攒到 trigger 才压，一次压到 target，压缩频率降到每 3 轮一次。
+    history_compress_trigger_messages: int = 12
+    history_compress_target_messages: int = 8
+    # 摘要正文的 token 兜底。中文摘要 120 字约 150~180 token，留一倍余量防截断。
+    history_summary_max_tokens: int = 240
+
     # 请求级分段计时（见 app/core/perf_trace.py）。
     # 日志：每个 chat 请求输出一行 PERF {json}，开销可忽略，默认开启。
     # 响应头：Server-Timing 会暴露内部阶段耗时，默认关闭；压测时设 PERF_TRACE_HEADER=1，
