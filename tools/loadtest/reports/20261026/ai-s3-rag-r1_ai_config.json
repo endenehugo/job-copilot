@@ -1,0 +1,93 @@
+{
+  "schema": 1,
+  "config_id": "b59acd3b23fb",
+  "comparable": {
+    "stage": "ai-stage3-rag-agent",
+    "mode": "rag",
+    "rag_source": "upload",
+    "target": "https://displaydemo.top",
+    "server_commit": "50467b5",
+    "model": "qwen3.8-flash",
+    "users": 1,
+    "spawn_rate": 1.0,
+    "run_time_s": 120.0,
+    "max_rps": 0.5,
+    "requests_per_user": 3,
+    "think_time_s": 1.0,
+    "stop_after_failures": 1,
+    "slow_ms": 90000.0,
+    "min_answer_chars": 5,
+    "health_probe_interval_s": 0.0,
+    "timeouts_s": {
+      "connect": 5.0,
+      "chat_read": 120.0,
+      "aux_read": 15.0
+    },
+    "queries": [
+      "根据我上传的资料，项目“星图-7421”的订单处理峰值是多少？只回答数字和单位。"
+    ],
+    "expect": [
+      "1830"
+    ],
+    "upload_doc": {
+      "name": "lt-rag-synthetic.txt",
+      "sha256": "4163fc738f38d820"
+    },
+    "scripts_sha256": {
+      "ai_common.py": "bfc325eba63610e0",
+      "support.py": "ccdc45ae33a6657c",
+      "run_manifest.py": "2e484f827c7c0f7b",
+      "locustfile_ai_stage3.py": "c1da4b0394c0f680"
+    }
+  },
+  "run": {
+    "label": "r1",
+    "note": "",
+    "started_at": "2026-10-26T09:20:20+08:00",
+    "ended_at": "2026-10-26T09:20:54+08:00",
+    "duration_s": 33.9,
+    "planned_chat_requests": 3,
+    "actual_chat_requests": 3,
+    "ended_reason": "completed",
+    "model_explicit": true,
+    "model_allowed": true,
+    "server": {
+      "role": "user",
+      "default_model": "qwen3.8-flash",
+      "models": [
+        "qwen3.8-flash",
+        "qwen3.8-omni-flash",
+        "qwen3.7-flash",
+        "qwen3.8-2.4t-a95b",
+        "qwen-plus"
+      ]
+    },
+    "auth": {
+      "admin_token": false,
+      "basic_auth": false
+    },
+    "git": {
+      "commit": "50467b5fddcb",
+      "branch": "main",
+      "dirty_files": []
+    },
+    "tool": {
+      "locust": "2.47.0",
+      "python": "3.12.7",
+      "platform": "Windows-11-10.0.26200-SP0",
+      "argv": "-f F:\\code\\job-copilot\\tools\\loadtest\\locustfile_ai_stage3.py --headless --csv F:\\code\\job-copilot\\tools\\loadtest\\reports\\20261026\\ai-s3-rag-r1 --csv-full-history --html F:\\code\\job-copilot\\tools\\loadtest\\reports\\20261026\\ai-s3-rag-r1.html --logfile F:\\code\\job-copilot\\tools\\loadtest\\reports\\20261026\\ai-s3-rag-r1.log"
+    },
+    "env": {
+      "LT_AI_MAX_REQUESTS_PER_USER": "3",
+      "LT_AI_MAX_RPS": "0.5",
+      "LT_AI_THINK_TIME": "1",
+      "LT_ENABLE_AI": "1",
+      "LT_LABEL": "r1",
+      "LT_MODE": "rag",
+      "LT_MODEL": "qwen3.8-flash",
+      "LT_RUN_TIME": "120s",
+      "LT_SERVER_COMMIT": "50467b5",
+      "LT_USERS": "1"
+    }
+  }
+}

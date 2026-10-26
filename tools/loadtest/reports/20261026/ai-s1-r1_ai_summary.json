@@ -1,0 +1,23 @@
+{
+  "stage": "ai-stage1-memory-smoke",
+  "mode": "memory",
+  "users": 1,
+  "planned_chat_requests": 1,
+  "chat_requests": 1,
+  "ended_reason": "completed",
+  "outcomes": {
+    "setup:OK": 1,
+    "OK": 1,
+    "check:OK": 1,
+    "cleanup:OK": 1
+  },
+  "slow_over_budget": 0,
+  "slow_budget_ms": 60000,
+  "config_id": "3a426c48f9f0",
+  "latency_ms": {
+    "min": 3530,
+    "p50": 3530,
+    "p95": 3530,
+    "max": 3530
+  }
+}

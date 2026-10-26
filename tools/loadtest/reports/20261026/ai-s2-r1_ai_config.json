@@ -1,0 +1,91 @@
+{
+  "schema": 1,
+  "config_id": "1a599b41e44e",
+  "comparable": {
+    "stage": "ai-stage2-memory-low-concurrency",
+    "mode": "memory",
+    "rag_source": null,
+    "target": "https://displaydemo.top",
+    "server_commit": "50467b5",
+    "model": "qwen3.8-flash",
+    "users": 2,
+    "spawn_rate": 1.0,
+    "run_time_s": 120.0,
+    "max_rps": 1.0,
+    "requests_per_user": 10,
+    "think_time_s": 3.0,
+    "stop_after_failures": 2,
+    "slow_ms": 60000.0,
+    "min_answer_chars": 5,
+    "health_probe_interval_s": 5.0,
+    "timeouts_s": {
+      "connect": 5.0,
+      "chat_read": 120.0,
+      "aux_read": 15.0
+    },
+    "queries": [
+      "用一句话回答：Python 的 GIL 是什么？",
+      "用一句话回答：进程和线程的主要区别是什么？",
+      "用一句话回答：TCP 为什么需要三次握手？",
+      "用一句话回答：MySQL 索引为什么通常用 B+ 树？",
+      "用一句话回答：Redis 的持久化有哪两种方式？"
+    ],
+    "expect": [],
+    "upload_doc": null,
+    "scripts_sha256": {
+      "ai_common.py": "bfc325eba63610e0",
+      "support.py": "ccdc45ae33a6657c",
+      "run_manifest.py": "2e484f827c7c0f7b",
+      "locustfile_ai_stage2.py": "30f98a3dd8482b98"
+    }
+  },
+  "run": {
+    "label": "r1",
+    "note": "",
+    "started_at": "2026-10-26T09:18:38+08:00",
+    "ended_at": "2026-10-26T09:19:48+08:00",
+    "duration_s": 70.4,
+    "planned_chat_requests": 20,
+    "actual_chat_requests": 20,
+    "ended_reason": "completed",
+    "model_explicit": true,
+    "model_allowed": true,
+    "server": {
+      "role": "user",
+      "default_model": "qwen3.8-flash",
+      "models": [
+        "qwen3.8-flash",
+        "qwen3.8-omni-flash",
+        "qwen3.7-flash",
+        "qwen3.8-2.4t-a95b",
+        "qwen-plus"
+      ]
+    },
+    "auth": {
+      "admin_token": false,
+      "basic_auth": false
+    },
+    "git": {
+      "commit": "50467b5fddcb",
+      "branch": "main",
+      "dirty_files": []
+    },
+    "tool": {
+      "locust": "2.47.0",
+      "python": "3.12.7",
+      "platform": "Windows-11-10.0.26200-SP0",
+      "argv": "-f F:\\code\\job-copilot\\tools\\loadtest\\locustfile_ai_stage2.py --headless --csv F:\\code\\job-copilot\\tools\\loadtest\\reports\\20261026\\ai-s2-r1 --csv-full-history --html F:\\code\\job-copilot\\tools\\loadtest\\reports\\20261026\\ai-s2-r1.html --logfile F:\\code\\job-copilot\\tools\\loadtest\\reports\\20261026\\ai-s2-r1.log"
+    },
+    "env": {
+      "LT_AI_MAX_REQUESTS_PER_USER": "10",
+      "LT_AI_MAX_RPS": "1",
+      "LT_AI_THINK_TIME": "3",
+      "LT_ENABLE_AI": "1",
+      "LT_LABEL": "r1",
+      "LT_MODEL": "qwen3.8-flash",
+      "LT_RUN_TIME": "120s",
+      "LT_SERVER_COMMIT": "50467b5",
+      "LT_USERS": "2"
+    }
+  }
+}
