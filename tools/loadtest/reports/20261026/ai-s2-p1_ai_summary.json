@@ -1,0 +1,26 @@
+{
+  "stage": "ai-stage2-memory-low-concurrency",
+  "mode": "memory",
+  "users": 2,
+  "planned_chat_requests": 20,
+  "chat_requests": 20,
+  "ended_reason": "completed",
+  "outcomes": {
+    "setup:OK": 2,
+    "OK": 20,
+    "check:OK": 2,
+    "cleanup:OK": 2
+  },
+  "slow_over_budget": 0,
+  "slow_budget_ms": 60000,
+  "trace": true,
+  "trace_requests": 20,
+  "server_timing_requests": 20,
+  "config_id": "7615ef420f1e",
+  "latency_ms": {
+    "min": 1457,
+    "p50": 2655,
+    "p95": 7656,
+    "max": 8411
+  }
+}
