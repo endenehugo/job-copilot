@@ -182,6 +182,9 @@ class Settings(BaseSettings):
     history_compress_max_messages: int = 40
     # 摘要正文的 token 兜底。中文摘要 120 字约 150~180 token，留一倍余量防截断。
     history_summary_max_tokens: int = 240
+    # 事实校验的输出上限。校验结果是一段短 JSON（实测关思考后 113 token），
+    # 400 留了 3.5 倍余量；这个值同时是"思考被误开"的止损阀。
+    context_verify_max_tokens: int = 400
 
     # 请求级分段计时（见 app/core/perf_trace.py）。
     # 日志：每个 chat 请求输出一行 PERF {json}，开销可忽略，默认开启。

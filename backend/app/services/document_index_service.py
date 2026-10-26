@@ -548,6 +548,9 @@ class DocumentIndexService:
             model=settings.llm_small_model,
             temperature=0.1,
             top_p=0.5,
+            # 重排输出只是一个编号数组，不需要思考；开着思考会把输出预算耗在推理过程上
+            enable_thinking=False,
+            max_tokens=120,
         )
 
         char_limit = settings.llm_rerank_char_limit
@@ -636,6 +639,9 @@ class DocumentIndexService:
             model=settings.llm_small_model,
             temperature=0.1,
             top_p=0.5,
+            # 重排输出只是一个编号数组，不需要思考；开着思考会把输出预算耗在推理过程上
+            enable_thinking=False,
+            max_tokens=120,
         )
 
         # 分批评分，每批最多 10 个文档

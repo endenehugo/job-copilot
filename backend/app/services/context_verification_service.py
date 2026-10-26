@@ -301,5 +301,10 @@ class ContextVerificationService:
                 model=settings.llm_small_model,
                 temperature=0.1,
                 top_p=0.3,
+                # 校验输出是一段结构化 JSON，不需要思考过程。开着思考时思考 token 也算输出，
+                # 线上实测 out_tokens 1049~1414、耗时 12s，比回答本身慢 4 倍；
+                # 关掉后 1.6s、113 token，判定结果完全一致。
+                enable_thinking=False,
+                max_tokens=settings.context_verify_max_tokens,
             )
         return self._verifier_llm
