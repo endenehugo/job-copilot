@@ -1,0 +1,23 @@
+{
+  "stage": "ai-stage2-memory-low-concurrency",
+  "mode": "memory",
+  "users": 2,
+  "planned_chat_requests": 20,
+  "chat_requests": 20,
+  "ended_reason": "completed",
+  "outcomes": {
+    "setup:OK": 2,
+    "OK": 20,
+    "check:OK": 2,
+    "cleanup:OK": 2
+  },
+  "slow_over_budget": 0,
+  "slow_budget_ms": 60000,
+  "config_id": "1a599b41e44e",
+  "latency_ms": {
+    "min": 1108,
+    "p50": 2629,
+    "p95": 7067,
+    "max": 7971
+  }
+}
