@@ -1,0 +1,15 @@
+{
+  "hostname": "iZc38367mjdkmtZ",
+  "kernel": "6.8.0-63-generic",
+  "cpu_count": 2,
+  "mem_total_mb": 1613,
+  "swap_total_mb": 2048,
+  "systemd": {
+    "MainPID": "731949",
+    "ActiveState": "active"
+  },
+  "app_commit": null,
+  "interval_s": 1.0,
+  "monitor_sha256": "15d0587e7ac287f8",
+  "started_at": "2026-10-26T15:51:37+08:00"
+}
