@@ -7,13 +7,14 @@ support.py 的主机白名单、全局限速和熔断监视，本模块在其之
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 import os
 import time
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import Callable
 
 import gevent
@@ -26,11 +27,23 @@ if os.getenv("LT_ENABLE_AI", "").strip() != "1":
         "AI 压测默认关闭。确认成本、配额与测试数据后，显式设置 LT_ENABLE_AI=1 再启动。"
     )
 
+from run_manifest import (
+    SCHEMA_VERSION,
+    env_snapshot,
+    file_sha256,
+    git_info,
+    make_config_id,
+    runtime_info,
+    sanitize_host,
+    text_sha256,
+    write_json,
+)
 from support import (
     REQUEST_GATE,
     add_safety_options,
     check_envelope,
     configure_http_auth,
+    duration_seconds,
     ensure_test_allowed,
     install_safety_monitor,
     response_json,
@@ -141,11 +154,15 @@ class RunState:
         self.slow = 0
         self.streak = 0
         self.finished_users = 0
+        self.completed_users = 0
+        self.external_stop = False
         self.query_seq = 0
         self.kept_conversations: list[str] = []
         self.quitting = False
         self.summarized = False
         self.probe: gevent.Greenlet | None = None
+        self.manifest: dict | None = None
+        self.started_mono = 0.0
 
 
 RUN = RunState()
@@ -287,8 +304,19 @@ def install(stage: Stage) -> Settings:
             int(settings.slow_ms),
             settings.stop_after_failures,
         )
+        RUN.started_mono = time.monotonic()
+        RUN.manifest = _build_manifest(stage, settings, environment, _fetch_server_info(options.host, settings))
+        _announce_manifest(RUN.manifest, settings)
+        _save_manifest(environment)
         if settings.health_probe_interval:
             RUN.probe = gevent.spawn(_probe_loop, environment, settings)
+
+    @events.test_stopping.add_listener
+    def mark_external_stop(environment, **kwargs) -> None:
+        # 我们自己结束测试（配额用完、安全停止）前都会先置 RUN.quitting；
+        # 否则就是到达 --run-time 或被 Ctrl+C 打断。
+        if not RUN.quitting:
+            RUN.external_stop = True
 
     @events.test_stop.add_listener
     def summarize(environment, **kwargs) -> None:
@@ -299,12 +327,20 @@ def install(stage: Stage) -> Settings:
         if RUN.probe is not None:
             RUN.probe.kill(block=False)
             RUN.probe = None
-        summary = build_summary(stage, settings, int(environment.parsed_options.num_users))
+        users = int(environment.parsed_options.num_users)
+        summary = build_summary(stage, settings, users, _ended_reason(environment, users))
         logger.info("\n%s", format_summary(summary))
         prefix = getattr(environment.parsed_options, "csv_prefix", None)
         if prefix:
-            with open(f"{prefix}_ai_summary.json", "w", encoding="utf-8") as handle:
-                json.dump(summary, handle, ensure_ascii=False, indent=2)
+            write_json(f"{prefix}_ai_summary.json", summary)
+        if RUN.manifest is not None:
+            RUN.manifest["run"].update(
+                ended_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+                duration_s=round(time.monotonic() - RUN.started_mono, 1),
+                actual_chat_requests=summary["chat_requests"],
+                ended_reason=summary["ended_reason"],
+            )
+            _save_manifest(environment)
 
     return settings
 
@@ -317,22 +353,168 @@ def _is_allowed(environment) -> bool:
     return True
 
 
+def _aux_session(settings: Settings) -> requests.Session:
+    session = requests.Session()
+    session.trust_env = False
+    configure_http_auth(session)
+    if settings.token:
+        session.headers.update({"X-Admin-Token": settings.token})
+    return session
+
+
+def _fetch_server_info(host: str, settings: Settings) -> dict:
+    """读取服务端对本次身份开放的模型清单与默认模型（只读，一次请求，不计入统计）。
+
+    未显式指定 LT_MODEL 时，实际使用的就是这里的默认模型；它随部署变化，必须留档。
+    """
+    session = _aux_session(settings)
+    try:
+        response = session.get(
+            host.rstrip("/") + "/api/v1/models", timeout=(settings.connect_timeout, settings.aux_timeout)
+        )
+        body = response_json(response)
+        reason = check_envelope(response, body)
+        if reason is not None:
+            return {"error": reason}
+        data = body.get("data") or {}
+        return {"role": data.get("role"), "default_model": data.get("default"), "models": data.get("models")}
+    except requests.RequestException as exc:
+        return {"error": f"E_TRANSPORT|{type(exc).__name__}"}
+    finally:
+        session.close()
+
+
+def _build_manifest(stage: Stage, settings: Settings, environment, server: dict) -> dict:
+    options = environment.parsed_options
+    here = Path(__file__).resolve().parent
+    scripts = [here / "ai_common.py", here / "support.py", here / "run_manifest.py"]
+    for item in str(getattr(options, "locustfile", "") or "").split(","):
+        path = Path(item.strip())
+        if path.suffix == ".py" and path.is_file():
+            scripts.append(path.resolve())
+
+    users = int(options.num_users)
+    comparable = {
+        "stage": stage.name,
+        "mode": settings.mode,
+        "rag_source": settings.rag_source or None,
+        "target": sanitize_host(options.host),
+        "server_commit": os.getenv("LT_SERVER_COMMIT", "").strip(),
+        "model": settings.model or server.get("default_model") or "unknown",
+        "users": users,
+        "spawn_rate": float(options.spawn_rate),
+        "run_time_s": duration_seconds(getattr(options, "run_time", None)),
+        "max_rps": float(options.max_rps),
+        "requests_per_user": settings.requests_per_user,
+        "think_time_s": settings.think_time,
+        "stop_after_failures": settings.stop_after_failures,
+        "slow_ms": settings.slow_ms,
+        "min_answer_chars": settings.min_answer,
+        "health_probe_interval_s": settings.health_probe_interval,
+        "timeouts_s": {
+            "connect": settings.connect_timeout,
+            "chat_read": settings.read_timeout,
+            "aux_read": settings.aux_timeout,
+        },
+        "queries": list(settings.queries),
+        "expect": list(settings.expect),
+        "upload_doc": (
+            {"name": settings.upload_doc[0], "sha256": text_sha256(settings.upload_doc[1])}
+            if settings.upload_doc
+            else None
+        ),
+        "scripts_sha256": {path.name: file_sha256(path) for path in scripts},
+    }
+    models = server.get("models")
+    return {
+        "schema": SCHEMA_VERSION,
+        "config_id": make_config_id(comparable),
+        "comparable": comparable,
+        "run": {
+            "label": os.getenv("LT_LABEL", "").strip(),
+            "note": os.getenv("LT_NOTE", "").strip(),
+            "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "ended_at": None,
+            "duration_s": None,
+            "planned_chat_requests": users * settings.requests_per_user,
+            "actual_chat_requests": None,
+            "ended_reason": None,
+            "model_explicit": bool(settings.model),
+            "model_allowed": (settings.model in models) if settings.model and isinstance(models, list) else None,
+            "server": server,
+            "auth": {
+                "admin_token": bool(settings.token),
+                "basic_auth": bool(os.getenv("LT_BASIC_AUTH_USER", "").strip()),
+            },
+            "git": git_info(here),
+            "tool": runtime_info(),
+            "env": env_snapshot(),
+        },
+    }
+
+
+def _announce_manifest(manifest: dict, settings: Settings) -> None:
+    comparable, run = manifest["comparable"], manifest["run"]
+    git = run["git"]
+    logger.info(
+        "配置指纹 config_id=%s model=%s server_commit=%s 脚本版本=%s%s label=%s",
+        manifest["config_id"],
+        comparable["model"],
+        comparable["server_commit"] or "未记录",
+        git.get("commit") or "未知",
+        "（有未提交改动，已用脚本哈希记录实际内容）" if git.get("dirty_files") else "",
+        run["label"] or "-",
+    )
+    if run["server"].get("error"):
+        logger.warning("读取服务端模型清单失败（%s），默认模型未知", run["server"]["error"])
+    if not settings.model:
+        logger.warning(
+            "未显式指定 LT_MODEL，本次使用服务端默认模型 %s；默认模型随部署变化会让不同轮次不可比，建议显式指定",
+            comparable["model"],
+        )
+    if run["model_allowed"] is False:
+        logger.warning("LT_MODEL=%s 不在服务端对当前身份开放的模型清单内，chat 很可能返回 400", settings.model)
+    if not comparable["server_commit"]:
+        logger.warning("未设置 LT_SERVER_COMMIT：无法确认被测服务端版本；优化前后对比时必须记录")
+
+
+def _save_manifest(environment) -> None:
+    prefix = getattr(environment.parsed_options, "csv_prefix", None)
+    if prefix and RUN.manifest is not None:
+        write_json(f"{prefix}_ai_config.json", RUN.manifest)
+
+
+def _ended_reason(environment, users: int) -> str:
+    stop_reason = getattr(environment, "stop_reason", None)
+    if stop_reason:
+        return f"safety_stop: {stop_reason}"
+    if RUN.completed_users >= users:
+        return "completed"
+    if RUN.external_stop:
+        return "run_time_expired_or_interrupted"
+    return "users_stopped_early"
+
+
 def _percentile(values: list[float], fraction: float) -> float:
     ordered = sorted(values)
     return ordered[max(0, math.ceil(fraction * len(ordered)) - 1)]
 
 
-def build_summary(stage: Stage, settings: Settings, users: int) -> dict:
+def build_summary(stage: Stage, settings: Settings, users: int, ended_reason: str) -> dict:
     chat = list(RUN.latencies)
     summary: dict = {
         "stage": stage.name,
         "mode": settings.mode,
         "users": users,
+        "planned_chat_requests": users * settings.requests_per_user,
         "chat_requests": len(chat),
+        "ended_reason": ended_reason,
         "outcomes": dict(RUN.outcomes),
         "slow_over_budget": RUN.slow,
         "slow_budget_ms": int(settings.slow_ms),
     }
+    if RUN.manifest is not None:
+        summary["config_id"] = RUN.manifest["config_id"]
     if RUN.kept_conversations:
         summary["kept_conversations"] = list(RUN.kept_conversations)
     if chat:
@@ -348,8 +530,13 @@ def build_summary(stage: Stage, settings: Settings, users: int) -> dict:
 def format_summary(summary: dict) -> str:
     lines = [
         f"===== {summary['stage']} 汇总（mode={summary['mode']}，users={summary['users']}）=====",
-        f"chat 请求数：{summary['chat_requests']}；超过 {summary['slow_budget_ms']}ms 预算：{summary['slow_over_budget']}",
+        f"chat 请求数：{summary['chat_requests']}（计划 {summary['planned_chat_requests']}）；"
+        f"超过 {summary['slow_budget_ms']}ms 预算：{summary['slow_over_budget']}",
     ]
+    if summary["ended_reason"] != "completed":
+        lines.append(f"结束原因：{summary['ended_reason']}（实际请求数少于计划时以此解释）")
+    if summary.get("config_id"):
+        lines.append(f"配置指纹：{summary['config_id']}（详见 *_ai_config.json；指纹相同的轮次才可直接比较）")
     outcomes = summary["outcomes"]
     if outcomes:
         lines.append("结果分类：" + "，".join(f"{key}={value}" for key, value in sorted(outcomes.items())))
@@ -373,11 +560,7 @@ def _probe_loop(environment, settings: Settings) -> None:
 
     探针不经过全局限速闸门（避免挤占模型请求的发起间隔），频率被限制在每 5 秒 1 次以内。
     """
-    session = requests.Session()
-    session.trust_env = False
-    configure_http_auth(session)
-    if settings.token:
-        session.headers.update({"X-Admin-Token": settings.token})
+    session = _aux_session(settings)
     url = environment.parsed_options.host.rstrip("/") + "/api/v1/system/health"
     while True:
         gevent.sleep(settings.health_probe_interval)
@@ -525,6 +708,7 @@ class AiChatUser(HttpUser):
     def on_start(self) -> None:
         self.conversation_id = ""
         self.keep_conversation = False
+        self.completed_quota = False
         self.sent = 0
         if not _is_allowed(self.environment):
             raise StopUser()  # 拒绝原因已在 test_start 记录，这里不再发送任何业务请求
@@ -633,6 +817,7 @@ class AiChatUser(HttpUser):
             logger.warning("agent 请求超时，保留会话 %s，请待后端结束后手动清理", self.conversation_id)
 
         if self.sent >= settings.requests_per_user:
+            self.completed_quota = True
             raise StopUser()
 
     def after_chat_ok(self, data: dict | None) -> None:
@@ -703,6 +888,8 @@ class AiChatUser(HttpUser):
             )
         self.conversation_id = ""
 
+        if self.completed_quota:
+            RUN.completed_users += 1
         RUN.finished_users += 1
         if RUN.finished_users >= int(self.environment.parsed_options.num_users):
             _request_quit(self.environment)

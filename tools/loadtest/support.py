@@ -134,7 +134,7 @@ def add_safety_options(
     events.init_command_line_parser.add_listener(add_options)
 
 
-def _duration_seconds(value: str | None) -> float | None:
+def duration_seconds(value: str | None) -> float | None:
     if not value:
         return None
     match = _DURATION_PATTERN.fullmatch(str(value))
@@ -152,6 +152,7 @@ def _stop(environment, message: str) -> None:
     logger.error("压测安全停止：%s", message)
     # 安全停止不应以退出码 0 结束，否则调用方会把“被拒绝/被熔断”误读成通过。
     environment.process_exit_code = 1
+    environment.stop_reason = message
     runner = getattr(environment, "runner", None)
     if runner is not None:
         # test_start 与 request 回调都跑在 Locust 管理的 greenlet 里，直接 quit() 会把当前
@@ -240,7 +241,7 @@ def install_safety_monitor() -> None:
                 _stop(environment, f"{options.scenario} 场景最多 {max_users} 个用户；31–40 需单独人工确认")
                 return
 
-        duration = _duration_seconds(getattr(options, "run_time", None))
+        duration = duration_seconds(getattr(options, "run_time", None))
         max_duration = 120 if options.scenario == "ai" else 300
         if duration is None or duration <= 0 or duration > max_duration:
             _stop(environment, f"必须设置有限测试时长；{options.scenario} 场景上限 {max_duration} 秒")

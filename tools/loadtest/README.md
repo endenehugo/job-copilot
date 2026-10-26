@@ -123,6 +123,52 @@ New-Item -ItemType Directory -Force -Path "reports\$stamp" | Out-Null
 
 所有阶段遇到 HTTP 429 都会立即停止；停止后仍会执行 `[check]` 健康检查和 `[cleanup]` 删会话。被拒绝的配置（用户数不符、主机不在白名单、缺少确认变量）在发送任何业务请求前以非零退出码结束。
 
+#### 用启动器固定配置（推荐）
+
+每轮都用 `run_ai_stage.ps1` 启动，保证各轮配置一致、可复现。它会清掉残留的 `LT_*` 环境变量（凭据和 `LT_HOST` 保留）、套用阶段预设、拒绝覆盖已有轮次，并在 `reports\<日期>\` 下写出全部产物。
+
+| 阶段 | 预设（用户 × 每人请求，思考间隔，全局 RPS，时长） |
+|---|---|
+| 1 | 1 × 1，1s，0.5，120s |
+| 2 | 2 × 10，3s，1，120s（RPS 取上限 1：请求启动间隔 = 1/RPS，0.5 时两个用户基本是轮流而不是并发） |
+| 3 | 1 × 3，1s，0.5，120s（`-Mode rag` 或 `-Mode agent` 二选一） |
+
+```powershell
+cd tools\loadtest
+# -Model 必填（或显式 -AllowServerDefaultModel）；-ServerCommit 记录被测服务端的部署版本；-Label 每轮唯一
+.\run_ai_stage.ps1 -Stage 1 -Model qwen3.8-flash -Label r1 -ServerCommit cf83407
+.\run_ai_stage.ps1 -Stage 2 -Model qwen3.8-flash -Label r1 -ServerCommit cf83407
+.\run_ai_stage.ps1 -Stage 3 -Mode rag   -Model qwen3.8-flash -Label r1 -ServerCommit cf83407
+.\run_ai_stage.ps1 -Stage 3 -Mode agent -ConfirmAgent -Model qwen3.8-flash -Label r1 -ServerCommit cf83407
+```
+
+可覆盖项：`-Users`、`-RequestsPerUser`、`-ThinkTime`、`-MaxRps`、`-RunTime`、`-RagSource`、`-Target`、`-Note`、`-OutDir`、`-Locust`。Agent 必须带 `-ConfirmAgent`，阶段 3 超过 1 个用户必须带 `-ConfirmTwoUsers`。产物前缀形如 `ai-s2-r1`、`ai-s3-rag-r1`，包含 `_stats.csv`、`_stats_history.csv`、`_failures.csv`、`.html`、`.log`、`_ai_summary.json`、`_ai_config.json`。
+
+#### 配置清单与可比性
+
+每轮的 `<前缀>_ai_config.json` 记录：
+
+- `comparable`：目标地址、被测服务端版本（`LT_SERVER_COMMIT`）、实际使用的模型、用户数、每人请求数、思考间隔、全局 RPS、时长、超时、慢请求预算、问题集、预期关键字、上传文档哈希，以及本次所用脚本文件的哈希。`config_id` 是这一段的指纹。
+- `run`：起止时间、标签、计划与实际 chat 数、结束原因、git 提交与未提交文件、Locust/Python 版本、`LT_*` 环境变量快照（凭据只记“已设置”）、服务端对当前身份开放的模型清单和默认模型。
+
+两轮的 `config_id` 相同，耗时才可直接比较；不同时用下面的命令看是哪一项变了（退出码 0 表示全部一致）：
+
+```powershell
+python diff_config.py reports\20261026\ai-s2-r1_ai_config.json reports\20261026\ai-s2-r2_ai_config.json
+```
+
+几个要点：
+
+- 未显式指定模型时，实际使用的是服务端默认模型，它会随部署变化，所以清单里记录的是读取到的默认模型名，并在日志里告警。
+- 服务端版本无法从客户端读到，只能靠 `-ServerCommit` 手工记录；优化前后对比时必须填。
+- 实际请求数少于计划时看 `ended_reason`：`completed`（全部完成）、`run_time_expired_or_interrupted`（到时间或 Ctrl+C）、`users_stopped_early`（有用户提前结束，例如建会话失败）、`safety_stop: …`（触发安全停止，带原因）。
+- 脚本目录有未提交改动时，`git.dirty_files` 会列出文件；复现以 `scripts_sha256` 为准。
+- 被安全限制在启动阶段拒绝的运行（例如主机不在白名单）不会生成 `_ai_config.json`，只有 `_ai_summary.json` 里的 `ended_reason`。
+
+#### 不用启动器直接运行
+
+等价的直接命令如下（配置只靠环境变量和命令行，需要自己保证每轮一致）：
+
 ```powershell
 $env:LT_ENABLE_AI = "1"
 $stamp = Get-Date -Format "yyyyMMdd"; New-Item -ItemType Directory -Force -Path "reports\$stamp" | Out-Null
@@ -177,7 +223,7 @@ $env:LT_MODE = "agent"; $env:LT_ENABLE_AGENT = "1"
 读结果时：
 
 - 以 `POST /conversation/chat [模式]` 行为准；Aggregated 行混有 `[setup]`、`[cleanup]`、`[check]`、`[probe]`，不能代表模型延迟。
-- 脚本结束时输出汇总，加 `--csv` 时同时写入 `<前缀>_ai_summary.json`（结果分类、chat 的 min/P50/P95/max、超预算次数）。chat 样本不足 20 时分位数仅供参考。
+- 脚本结束时输出汇总，加 `--csv` 时同时写入 `<前缀>_ai_summary.json`（计划与实际 chat 数、结束原因、`config_id`、结果分类、chat 的 min/P50/P95/max、超预算次数）。chat 样本不足 20 时分位数仅供参考。
 - 到达 `--run-time` 时会等待在途请求完成（`--stop-timeout` = 读超时 + 15 秒），不会把慢请求静默丢掉。
 - 服务器 CPU/内存/MySQL 仍需在服务器上按下文“服务器资源采集”记录；阶段 2 的 `[probe]` 延迟只是客户端侧的响应信号。
 
