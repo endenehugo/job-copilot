@@ -46,6 +46,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from contextvars import ContextVar
 from functools import lru_cache
 from typing import Any, Iterator, List, Optional
 
@@ -158,6 +159,12 @@ def _record_llm(model: str, started: float, *, fallback: bool, tokens=(None, Non
     )
 
 
+# streaming=True 的客户端在 invoke() 时，ChatOpenAI._generate 内部会走 self._stream，
+# 两层都记就会把一次调用算成两次（token 数还一模一样）。用 contextvar 标记"当前已经在
+# _generate 的计时范围内"，内层只负责产出，不再登记。
+_INSIDE_GENERATE: ContextVar[bool] = ContextVar("llm_inside_generate", default=False)
+
+
 class QuotaFallbackMixin:
     """额度错误自动降级链，与具体客户端解耦（ChatTongyi / ChatOpenAI 通用）。
 
@@ -190,26 +197,30 @@ class QuotaFallbackMixin:
         **kwargs: Any,
     ) -> ChatResult:
         chain = self._model_chain
-        for idx, model in enumerate(chain):
-            if self.model_name != model:
-                self._switch_to(model)
-            started = time.perf_counter()
-            try:
-                result = super()._generate(
-                    messages, stop=stop, run_manager=run_manager, **kwargs
-                )
-            except Exception as exc:
-                _record_llm(model, started, fallback=idx > 0, error=type(exc).__name__)
-                if idx < len(chain) - 1 and _is_quota_error(exc):
-                    logger.warning(
-                        "模型 %s 调用失败（疑似额度/权限问题），尝试降级：%s",
-                        model,
-                        exc,
+        token = _INSIDE_GENERATE.set(True)
+        try:
+            for idx, model in enumerate(chain):
+                if self.model_name != model:
+                    self._switch_to(model)
+                started = time.perf_counter()
+                try:
+                    result = super()._generate(
+                        messages, stop=stop, run_manager=run_manager, **kwargs
                     )
-                    continue
-                raise
-            _record_llm(model, started, fallback=idx > 0, tokens=_result_tokens(result))
-            return result
+                except Exception as exc:
+                    _record_llm(model, started, fallback=idx > 0, error=type(exc).__name__)
+                    if idx < len(chain) - 1 and _is_quota_error(exc):
+                        logger.warning(
+                            "模型 %s 调用失败（疑似额度/权限问题），尝试降级：%s",
+                            model,
+                            exc,
+                        )
+                        continue
+                    raise
+                _record_llm(model, started, fallback=idx > 0, tokens=_result_tokens(result))
+                return result
+        finally:
+            _INSIDE_GENERATE.reset(token)
 
     def _stream(
         self,
@@ -218,6 +229,8 @@ class QuotaFallbackMixin:
         run_manager: Optional[CallbackManagerForLLMRun] = None,
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
+        # 被 _generate 内部调用时（streaming=True 的连通器路径），外层已经计过一次
+        record = not _INSIDE_GENERATE.get()
         chain = self._model_chain
         for idx, model in enumerate(chain):
             if self.model_name != model:
@@ -231,10 +244,12 @@ class QuotaFallbackMixin:
                 # 即可在"零输出"阶段安全降级；一旦已产出内容则不再切换。
                 first_chunk = next(iterator)
             except StopIteration:
-                _record_llm(model, started, fallback=idx > 0)
+                if record:
+                    _record_llm(model, started, fallback=idx > 0)
                 return
             except Exception as exc:
-                _record_llm(model, started, fallback=idx > 0, error=type(exc).__name__)
+                if record:
+                    _record_llm(model, started, fallback=idx > 0, error=type(exc).__name__)
                 if idx < len(chain) - 1 and _is_quota_error(exc):
                     logger.warning(
                         "模型 %s 流式调用失败（疑似额度/权限问题），尝试降级：%s",
@@ -259,7 +274,8 @@ class QuotaFallbackMixin:
                 close = getattr(iterator, "close", None)
                 if close is not None:
                     close()
-                _record_llm(model, started, fallback=idx > 0, tokens=_chunk_tokens(last_chunk), error=error)
+                if record:
+                    _record_llm(model, started, fallback=idx > 0, tokens=_chunk_tokens(last_chunk), error=error)
             return
 
 

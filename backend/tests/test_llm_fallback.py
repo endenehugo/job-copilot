@@ -297,3 +297,48 @@ class TestThinkingSwitch:
         llm = build_chat_llm("qwen-plus", enable_thinking=False)
         assert isinstance(llm, FallbackChatModel)
         assert not hasattr(llm, "extra_body")
+
+
+class TestPerfTraceSingleRecord:
+    """streaming=True 的客户端在 invoke() 时 ChatOpenAI._generate 内部会走 _stream，
+    两层都记录会把一次调用算成两次（线上实测 token 数一模一样的两条）。"""
+
+    @staticmethod
+    def _patch_stream_inside_generate():
+        def fake_stream(self, messages, stop=None, run_manager=None, **kwargs):
+            yield ChatGenerationChunk(message=AIMessageChunk(content="ok"))
+
+        def fake_generate(self, messages, stop=None, run_manager=None, **kwargs):
+            chunks = list(self._stream(messages))
+            return ChatResult(
+                generations=[ChatGeneration(message=AIMessage(content="".join(c.message.content for c in chunks)))]
+            )
+
+        return (
+            patch("langchain_community.chat_models.tongyi.ChatTongyi._generate", fake_generate),
+            patch("langchain_community.chat_models.tongyi.ChatTongyi._stream", fake_stream),
+        )
+
+    def test_generate_delegating_to_stream_records_one_call(self):
+        from app.core import perf_trace as pt
+
+        llm = _make_llm()
+        generate_patch, stream_patch = self._patch_stream_inside_generate()
+        with generate_patch, stream_patch:
+            with pt.trace_scope("probe") as trace:
+                llm.invoke("hi")
+        calls = [span for span in trace.spans if span["name"] == "llm.call"]
+        assert len(calls) == 1
+
+    def test_direct_stream_still_records_one_call(self):
+        from app.core import perf_trace as pt
+
+        def fake_stream(self, messages, stop=None, run_manager=None, **kwargs):
+            yield ChatGenerationChunk(message=AIMessageChunk(content="ok"))
+
+        llm = _make_llm()
+        with patch("langchain_community.chat_models.tongyi.ChatTongyi._stream", fake_stream):
+            with pt.trace_scope("probe") as trace:
+                chunks = list(llm.stream("hi"))
+        calls = [span for span in trace.spans if span["name"] == "llm.call"]
+        assert len(chunks) == 1 and len(calls) == 1
