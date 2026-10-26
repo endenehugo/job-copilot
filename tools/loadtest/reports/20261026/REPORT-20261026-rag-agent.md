@@ -1,0 +1,124 @@
+# 2026-10-26 RAG / Agent 分段计时
+
+## 一句话
+
+**RAG 的 79% 花在校验上，而校验那次 LLM 开着思考**——关掉后 RAG 从 13.9s 降到 3.5s（−75%）。
+Agent 的 23.4s 里 99% 是三次模型调用，其中工具内部那次简历抽取独占 10.2s。
+
+## 方法
+
+`run_ai_stage.ps1 -Stage 3 -Mode rag|agent -Trace -RequestsPerUser 3`，
+1 用户、3 次请求（stage3 的上限），服务端 `PERF_TRACE_HEADER=1`。
+RAG 用上传合成文档（`LT_RAG_SOURCE=upload`），Agent 用合成简历 + `resume_generate_tool`。
+
+样本只有 3 次，**够看结构、不够看分位数**。
+
+## RAG
+
+### 优化前
+
+| seq | 总计 | retrieve | answer | **verify** | 模型调用 |
+|---|---|---|---|---|---|
+| 1 | 12595 ms | 422 | 3014 | **9114** | 2 |
+| 2 | 13232 ms | 397 | 1890 | **10913** | 2 |
+| 3 | 15993 ms | 391 | 2410 | **13161** | 2 |
+
+阶段占比：**verify 79%**、answer 17%、retrieve 3%、db 0%。
+
+### 根因：校验那次 LLM 开着思考
+
+从 PERF 日志里取那一次调用的 attrs：
+
+```
+verify dur 9113.6  llm.call dur 9054.4  model=qwen3.7-flash  in_tokens=226  out_tokens=948
+verify dur 10913.2 llm.call dur 10912.3 model=qwen3.7-flash  in_tokens=226  out_tokens=1111
+verify dur 13161.3 llm.call dur 13160.8 model=qwen3.7-flash  in_tokens=226  out_tokens=1265
+```
+
+**输入 226 token，输出 948~1265 token。** 校验结果只是一段短 JSON（几条 supported/unsupported），
+输出长度却是输入的 5 倍——多出来的是思考过程。`context_verification_service._get_llm()` 没传
+`enable_thinking=False`。
+
+本地对照 3 轮（同一段 answer + context）：
+
+| 配置 | P50 | 输出 token | 判定结果 |
+|---|---|---|---|
+| 现状（不传 enable_thinking） | 11985 ms | 1049 / 1368 / 1414 | 3 条 supported |
+| 关思考 + `max_tokens=400` | **1562 ms** | 114 / 114 / 113 | 3 条 supported（一致） |
+
+顺带补了同样遗漏的检索重排：两处 `build_chat_llm` 也没关思考，输出本该只是一个编号数组。
+
+### 优化后
+
+| seq | 总计 | retrieve | answer | verify | 模型调用 |
+|---|---|---|---|---|---|
+| 1 | 4130 ms | 411 | 2325 | 1356 | 2 |
+| 2 | 3329 ms | 298 | 1762 | 1236 | 2 |
+| 3 | 3109 ms | 329 | 1575 | 1175 | 2 |
+
+| | 优化前 P50 | 优化后 P50 | 变化 |
+|---|---|---|---|
+| 总耗时 | 13232 ms | **3329 ms** | **−75%** |
+| verify | 10913 ms | **1236 ms** | **−89%** |
+
+现在 RAG 的结构：answer 54%、verify 36%、retrieve 10%、db 1%。
+
+历史上（无 trace）RAG 五轮 P50 是 6.7~9.3s。**现在 3.3s，比历史基线还快 58%**——
+说明那 11 秒的校验一直存在，只是从来没被拆开看过。
+
+## Agent（未改动）
+
+| seq | 总计 | retrieve | agent.round（两轮合计） | **tool.resume_generate_tool** | 模型调用 |
+|---|---|---|---|---|---|
+| 1 | 18712 ms | 167 | 9271 | **9245** | 3 |
+| 2 | 27857 ms | 174 | 15961 | **11689** | 3 |
+| 3 | 23634 ms | 162 | 13150 | **10292** | 3 |
+
+单次请求的三段（从 span 明细取一条）：
+
+```
+agent.round 第 1 轮   1715 ms   llm in=2875  out=63     → 决定调用工具
+tool.resume_generate_tool 9245 ms  llm in=2563  out=825  → 简历结构化抽取
+agent.round 第 2 轮   7555 ms   llm in=3101  out=493    → 收尾回答
+db.save / db.detail    19 ms
+```
+
+**三次模型调用占 23.1s，= 总耗时的 99%。** 检索 168ms、DB 29ms 都可以忽略。
+
+Agent 慢的两个原因，跟 RAG 不一样：
+
+1. **输入 token 大**：2875~4188，是 memory 模式（111~623）的 6-10 倍。历史 + 工具定义 +
+   工具返回的整页 HTML 都塞进了上下文，模型处理这些就要时间。
+2. **工具内部那次抽取输出 820~845 token**：`resume_generate_tool` 里的简历结构化抽取，
+   即使已经关了思考、`max_tokens=6000`，输出仍然很长。
+
+## 三点必须说明的偏差
+
+1. **压测走非流式端点，RAG 的数字比用户感知差**。流式端点里 `done` 在 verify **之前**发
+   （代码注释：「验证还要跑一次 LLM，不能让它挡在回答前面」）。所以优化前的真实体验是
+   "8 秒出完答案，连接再挂 11 秒校验"；压测的 13.2s 把两段加在了一起。优化后差距缩小到 1.2s。
+2. **样本 3 次**，不支持分位数结论，只支持"结构比例"。
+3. **rerank 没有触发**（`st_rerank=0`）：检索候选数 ≤ top_k，走的是直接返回。所以这次
+   没有验证重排的实际耗时，只补上了它的思考开关。文档多的会话才会真正触发。
+
+## 剩下的优化空间
+
+| 位置 | 现状 | 可做的 | 风险 |
+|---|---|---|---|
+| RAG 的 verify | 1.24s，占 36% | 非流式端点也改成"先返回、后校验" | 要改响应契约（`verification` 字段变延迟/为空） |
+| Agent 工具内抽取 | 10.2s，占 44% | 收紧输出（820 token 的 JSON 太长）、拆成两步小模型调用 | 抽取不全会导致简历缺字段 |
+| Agent 第 2 轮 | 7.5s，输入 3101-4188 | 工具返回的 HTML 不要整页塞回上下文 | 模型可能看不到关键内容 |
+
+我的判断：**RAG 到这里可以收了**（3.3s，剩下 36% 是合理的一次小模型调用）。
+Agent 下一个性价比最高的是"工具返回的 HTML 不要整页塞回上下文"——它同时压第 2 轮的输入和耗时，
+但需要验证模型还能正确收尾。
+
+## 产物
+
+| 文件 | 内容 |
+|---|---|
+| `ai-s3-rag-160138_ai_requests.csv` | RAG 优化前（3 次） |
+| `ai-s3-rag-rag2_ai_requests.csv` | RAG 优化后（3 次） |
+| `ai-s3-agent-160240_ai_requests.csv` | Agent（3 次） |
+| `REPORT-20261026-capacity.md` | 同一天的容量测试（69-70 RPS） |
+| `SUMMARY-20261026.md` | memory 模式三轮优化总结 |

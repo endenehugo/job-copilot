@@ -1,0 +1,26 @@
+{
+  "stage": "ai-stage3-rag-agent",
+  "mode": "rag",
+  "users": 1,
+  "planned_chat_requests": 3,
+  "chat_requests": 3,
+  "ended_reason": "completed",
+  "outcomes": {
+    "setup:OK": 2,
+    "OK": 3,
+    "check:OK": 1,
+    "cleanup:OK": 1
+  },
+  "slow_over_budget": 0,
+  "slow_budget_ms": 90000,
+  "trace": true,
+  "trace_requests": 3,
+  "server_timing_requests": 3,
+  "config_id": "8447bb137f74",
+  "latency_ms": {
+    "min": 3186,
+    "p50": 3390,
+    "p95": 4198,
+    "max": 4198
+  }
+}
