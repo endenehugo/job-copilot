@@ -17,7 +17,7 @@ import re
 import shutil
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
@@ -36,6 +36,7 @@ from app.core.ownership import (
     request_owner_scope,
     storage_owner_key,
 )
+from app.core.perf_trace import trace_scope
 from app.core.response import fail, ok
 from app.core.security import get_current_role
 from app.services.generated_file_service import (
@@ -121,6 +122,8 @@ def conversation_detail(conversation_id: str = Query(default=""), owner_key: str
 @router.post("/conversation/chat")
 def conversation_chat(
     payload: ChatRequest,
+    request: Request,
+    response: Response,
     role: str = Depends(get_current_role),
     owner_key: str = Depends(get_owner_key),
 ) -> dict:
@@ -138,14 +141,17 @@ def conversation_chat(
         return fail(skill_error, code=400)
 
     try:
-        with request_model_scope(payload.model, role), request_conversation_scope(
-            conversation_id
-        ), request_owner_scope(owner_key):
+        with trace_scope("chat", conversation_id=conversation_id, mode=payload.mode) as trace, request_model_scope(
+            payload.model, role
+        ), request_conversation_scope(conversation_id), request_owner_scope(owner_key):
             result = get_conversation_chat_service().chat(
                 conversation_id, query, payload.mode, image_urls, skill
             )
     except ValueError as exc:
         return fail(str(exc), code=400)
+    # Server-Timing 会暴露内部阶段耗时：服务端开关和请求头都要打开才返回
+    if settings.perf_trace_header and request.headers.get("x-perf-trace") == "1":
+        response.headers["Server-Timing"] = trace.to_server_timing()
     # 工具链异常结束的告警从 data 提升到信封，让前端拦截器统一提示
     warnings = result.pop("warnings", None) or []
     # 旧契约：信封 message 携带回答文本，data 携带完整结果
@@ -191,7 +197,11 @@ def conversation_chat_stream(
         iterator = get_conversation_chat_service().chat_stream(
             conversation_id, query, payload.mode, image_urls, skill
         )
-        with request_model_scope(selected_model, role), request_conversation_scope(
+        # 计时作用域必须和模型作用域一样在生成器内部开启：端点里 with 一下就退出时，
+        # 生成器还没被消费，整条流的耗时不会被记到任何 trace 上。
+        with trace_scope(
+            "chat_stream", conversation_id=conversation_id, mode=payload.mode
+        ) as trace, request_model_scope(selected_model, role), request_conversation_scope(
             conversation_id
         ), request_owner_scope(owner_key):
             ctx = contextvars.copy_context()  # 必须在 scope 内取，才带上本次模型与会话
@@ -200,6 +210,12 @@ def conversation_chat_stream(
                     event = await run_in_threadpool(ctx.run, _next_or_none, iterator)
                     if event is None:
                         break
+                    # ttft/done 记在 trace 对象上而不是靠 ContextVar：async 生成器的
+                    # 每次 __anext__ 未必在同一份 context 里，对象本身是共享的
+                    if event["event"] == "delta" and "ttft_ms" not in trace.attrs:
+                        trace.attrs["ttft_ms"] = round(trace.elapsed_ms(), 1)
+                    elif event["event"] == "done":
+                        trace.attrs["done_ms"] = round(trace.elapsed_ms(), 1)
                     yield sse(event["event"], event["data"])
             except PermissionError as exc:
                 # 演示样本只读。单独分支：落到下面的 Exception 会变成"服务器内部错误"，

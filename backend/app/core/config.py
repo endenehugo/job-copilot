@@ -166,6 +166,13 @@ class Settings(BaseSettings):
     # 命中该词的任务视为"写简历/改简历"，此时不再注入任何内置知识库条目
     builtin_kb_resume_block_keywords: str = "简历,履历,resume"
 
+    # 请求级分段计时（见 app/core/perf_trace.py）。
+    # 日志：每个 chat 请求输出一行 PERF {json}，开销可忽略，默认开启。
+    # 响应头：Server-Timing 会暴露内部阶段耗时，默认关闭；压测时设 PERF_TRACE_HEADER=1，
+    # 且请求还要带 X-Perf-Trace: 1 才会返回。
+    perf_trace_log: bool = True
+    perf_trace_header: bool = False
+
     resources_root: str = str(_BACKEND_ROOT / "resources")
 
     def model_post_init(self, __context) -> None:

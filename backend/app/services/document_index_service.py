@@ -12,6 +12,7 @@ from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.core.config import settings
+from app.core.perf_trace import span
 from app.utils import ResourceUtils
 
 logger = logging.getLogger(__name__)
@@ -168,16 +169,19 @@ class DocumentIndexService:
         source = ""
         conversation_db = self._load_conversation_db(conversation_id)
         if conversation_db is not None:
-            docs = self._hybrid_retrieve(conversation_db, conversation_id, query, limit)
+            with span("retrieve.conversation"):
+                docs = self._hybrid_retrieve(conversation_db, conversation_id, query, limit)
             source = "conversation"
 
         if not docs:
             public_retriever = self._load_public_retriever()
             if public_retriever is not None:
-                docs = public_retriever.get_relevant_documents(query)
+                with span("retrieve.public"):
+                    docs = public_retriever.get_relevant_documents(query)
                 source = "public"
 
-        docs = self._supplement_with_builtin_knowledge(docs, query)
+        with span("retrieve.builtin"):
+            docs = self._supplement_with_builtin_knowledge(docs, query)
 
         return {
             "context": self._format_context(docs),
@@ -443,6 +447,22 @@ class DocumentIndexService:
     # ============================================================
 
     def _rerank_docs(
+        self,
+        query: str,
+        docs: list[Document],
+        top_k: int = 4,
+        lists: list[list[Document]] | None = None,
+    ) -> list[Document]:
+        """重排入口：真正需要重排（会走 RRF/BGE/LLM）时才给整段计时。"""
+        if len(docs) <= top_k:
+            return docs[:top_k]
+        strategy = (settings.rerank_strategy or "listwise").strip().lower()
+        if strategy == "off":
+            return docs[:top_k]
+        with span("rerank", strategy=strategy, docs=len(docs)):
+            return self._rerank_docs_untimed(query, docs, top_k, lists)
+
+    def _rerank_docs_untimed(
         self,
         query: str,
         docs: list[Document],

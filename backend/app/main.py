@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import auth, conversations, documents, exports, interviews, jobs, knowledge, models, resume_generation, resumes, skills, system
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
+from app.core.perf_trace import configure_perf_logging
 from app.core.response import ok
 from app.core.visitor_middleware import VisitorMiddleware
 from app.utils import ResourceUtils
@@ -27,6 +28,9 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     ResourceUtils.init(settings.resources_root)
+    # 请求级分段计时（PERF {json}）要靠这个处理器才能进 journal。
+    # 不接线的话 perf_trace 只在内存里记，线上永远看不到任何一行。
+    configure_perf_logging()
     # B16/A22：启动时检测一次 API Key，结果缓存在 app.state 供 /health 查询。
     # "服务健康但 Key 无效"不再无感——部署后看日志或 /health 的 keys_ok 即可。
     try:

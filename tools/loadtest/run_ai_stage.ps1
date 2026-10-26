@@ -39,6 +39,7 @@ param(
     [ValidateSet("upload", "builtin")][string]$RagSource,
     [switch]$ConfirmAgent,
     [switch]$ConfirmTwoUsers,
+    [switch]$Trace,
     [string]$OutDir,
     [string]$Locust
 )
@@ -122,6 +123,10 @@ if ($Mode) { $env:LT_MODE = $Mode }
 if ($Mode -eq "agent") { $env:LT_ENABLE_AGENT = "1" }
 if ($RagSource) { $env:LT_RAG_SOURCE = $RagSource }
 if ($Stage -eq "3" -and $users -gt 1) { $env:LT_STAGE3_CONFIRM_2_USERS = "YES" }
+if ($Trace) {
+    $env:LT_TRACE = "1"
+    Write-Warning "Trace on: every chat request sends X-Perf-Trace: 1. The server must also set PERF_TRACE_HEADER=1, otherwise the server-side columns in *_ai_requests.csv stay empty."
+}
 
 if (-not $ServerCommit) {
     Write-Warning "No -ServerCommit given: the deployed server version will not be recorded (required for before/after comparisons)."

@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 import diff_config
-from run_manifest import ABSENT, diff, env_snapshot, git_info, make_config_id, sanitize_host, write_json
+from run_manifest import ABSENT, diff, env_snapshot, git_info, make_config_id, runtime_info, sanitize_host, write_json
 
 
 class EnvSnapshotTests(unittest.TestCase):
@@ -72,6 +72,13 @@ class GitInfoTests(unittest.TestCase):
             info = git_info(temp)
         self.assertEqual(set(info), {"commit", "branch", "dirty_files"})
         self.assertEqual(info["dirty_files"], [])
+
+
+class RuntimeInfoTests(unittest.TestCase):
+    def test_includes_hostname_and_platform(self) -> None:
+        info = runtime_info()
+        self.assertTrue(info["hostname"])
+        self.assertTrue(info["platform"])
 
 
 class DiffConfigCliTests(unittest.TestCase):

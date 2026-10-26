@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -63,6 +64,7 @@ def build_agent_system_prompt() -> str:
 from app.core.llm_factory import build_chat_llm
 from app.core.model_scope import current_chat_model
 from app.core.ownership import current_owner_key
+from app.core.perf_trace import record_span, set_attr, span
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
@@ -140,33 +142,44 @@ class ConversationChatService:
         normalized_mode = mode if mode in {"agent", "rag", "memory"} else "agent"
         effective_query = (query or "").strip() or "请描述图片内容。"
         normalized_image_urls = [item for item in (image_urls or []) if item]
+        set_attr("mode", normalized_mode)
+        set_attr("model", current_chat_model())
         # 归属从请求作用域取：这条调用链太深（chat_stream → 这里），逐层透传必漏。
         # 用 writable 而非 exists：演示样本对访客可见，但对话会落消息，
         # 不拦的话第一个访客就能把样本聊脏
-        self.conversation_store_service.ensure_conversation_writable(
-            conversation_id, owner_key=current_owner_key()
-        )
-        self._ensure_initialized()
+        with span("db.writable"):
+            self.conversation_store_service.ensure_conversation_writable(
+                conversation_id, owner_key=current_owner_key()
+            )
+        with span("init"):
+            self._ensure_initialized()
 
-        old_summary, summarized_until_id = self.conversation_store_service.get_conversation_summary(conversation_id)
-        history = self.conversation_store_service.get_messages_after(conversation_id, summarized_until_id)
+        with span("db.history"):
+            old_summary, summarized_until_id = self.conversation_store_service.get_conversation_summary(conversation_id)
+            history = self.conversation_store_service.get_messages_after(conversation_id, summarized_until_id)
 
-        compressed_history, new_summary, new_watermark = self.context_compression_service.compress_history(
-            history, old_summary=old_summary, max_messages=self._MAX_HISTORY_MESSAGES
-        )
+        with span("compress") as compress_span:
+            compressed_history, new_summary, new_watermark = self.context_compression_service.compress_history(
+                history, old_summary=old_summary, max_messages=self._MAX_HISTORY_MESSAGES
+            )
+            if compress_span is not None:
+                # 水位前移 = 这次真的做了摘要（会同步多调一次小模型）
+                compress_span["attrs"].update(messages=len(history), triggered=new_watermark > 0)
 
         if new_summary != old_summary and new_watermark > 0:
-            self.conversation_store_service.save_conversation_summary(
-                conversation_id, new_summary, new_watermark
-            )
+            with span("db.summary"):
+                self.conversation_store_service.save_conversation_summary(
+                    conversation_id, new_summary, new_watermark
+                )
 
         if normalized_mode == "memory":
             context = ""
             source_docs = []
         else:
-            context_result = self.document_index_service.get_context_with_details(
-                conversation_id, effective_query, limit=4
-            )
+            with span("retrieve"):
+                context_result = self.document_index_service.get_context_with_details(
+                    conversation_id, effective_query, limit=4
+                )
             context = context_result["context"]
             source_docs = context_result["documents"]
 
@@ -234,7 +247,8 @@ class ConversationChatService:
         files: list[dict] = []
         tool_warnings: list[str] = []
         if normalized_image_urls:
-            answer = self._invoke_multimodal(compressed_history, context, effective_query, normalized_image_urls)
+            with span("answer", multimodal=True):
+                answer = self._invoke_multimodal(compressed_history, context, effective_query, normalized_image_urls)
         else:
             prompt = self.agent_prompt if normalized_mode == "agent" else self.qa_prompt
             prompt_messages = prompt.invoke({
@@ -247,7 +261,8 @@ class ConversationChatService:
             if normalized_mode == "agent":
                 answer, files, tool_warnings = self._invoke_agent(prompt_messages, effective_query)
             else:
-                answer = self._get_qa_llm().invoke(prompt_messages).content
+                with span("answer"):
+                    answer = self._get_qa_llm().invoke(prompt_messages).content
 
         answer = answer or self._fallback_answer(tool_warnings)
         answer = self._guard_fake_artifact_claim(answer, files)
@@ -258,9 +273,10 @@ class ConversationChatService:
         cited_answer = answer
         if context and normalized_mode != "memory" and not files:
             try:
-                verify_report = self.context_verification_service.generate_verification_report(
-                    answer, context, source_docs
-                )
+                with span("verify"):
+                    verify_report = self.context_verification_service.generate_verification_report(
+                        answer, context, source_docs
+                    )
                 verification_result = verify_report["verification"]
                 cited_answer = verify_report["cited_answer"]
             except Exception as exc:
@@ -268,10 +284,12 @@ class ConversationChatService:
                 logging.getLogger(__name__).warning("上下文验证异常，跳过: %s", exc)
 
         # 5. 存储历史（存原始回答，不含引用标记）
-        self.conversation_store_service.append_message_pair(conversation_id, user_content, answer, normalized_mode)
-        detail = self.conversation_store_service.get_conversation_detail(
-            conversation_id, owner_key=current_owner_key()
-        )
+        with span("db.save"):
+            self.conversation_store_service.append_message_pair(conversation_id, user_content, answer, normalized_mode)
+        with span("db.detail"):
+            detail = self.conversation_store_service.get_conversation_detail(
+                conversation_id, owner_key=current_owner_key()
+            )
         return {
             "answer": cited_answer,  # 返回带引用的回答
             "original_answer": answer,
@@ -313,7 +331,8 @@ class ConversationChatService:
         tool_warnings: list[str] = []
 
         if normalized_image_urls:
-            answer = self._invoke_multimodal(compressed_history, context, effective_query, normalized_image_urls)
+            with span("answer", multimodal=True):
+                answer = self._invoke_multimodal(compressed_history, context, effective_query, normalized_image_urls)
             if answer:
                 yield {"event": "delta", "data": {"text": answer}}
         else:
@@ -328,6 +347,9 @@ class ConversationChatService:
             if normalized_mode == "agent":
                 streamed_text = ""
                 merged = None
+                # 生成器不能把 span 跨 yield 持有（每次迭代可能在不同 context 里），
+                # 流式的首轮模型调用改为手动计时后登记
+                round_started = time.perf_counter()
                 try:
                     for chunk in self._get_agent_llm().stream(prompt_messages):
                         merged = chunk if merged is None else merged + chunk
@@ -338,6 +360,7 @@ class ConversationChatService:
                     logger.warning("流式生成异常: %s", exc)
                     # 旧代码只写日志，前端收不到 error 事件，界面会静默显示残缺回答
                     yield {"event": "error", "data": {"message": "生成过程中断，已保留已生成的部分内容"}}
+                record_span("agent.round", (time.perf_counter() - round_started) * 1000, round=1, streamed=True)
 
                 if merged is not None and merged.tool_calls:
                     messages = list(prompt_messages)
@@ -355,7 +378,8 @@ class ConversationChatService:
                 else:
                     answer = streamed_text
             else:
-                answer = self._get_qa_llm().invoke(prompt_messages).content
+                with span("answer"):
+                    answer = self._get_qa_llm().invoke(prompt_messages).content
                 if answer:
                     yield {"event": "delta", "data": {"text": answer}}
 
@@ -363,10 +387,12 @@ class ConversationChatService:
         answer = self._guard_fake_artifact_claim(answer, files)
 
         # 与非流式一致：持久化原始回答（不含引用标记）
-        self.conversation_store_service.append_message_pair(conversation_id, user_content, answer, normalized_mode)
-        detail = self.conversation_store_service.get_conversation_detail(
-            conversation_id, owner_key=current_owner_key()
-        )
+        with span("db.save"):
+            self.conversation_store_service.append_message_pair(conversation_id, user_content, answer, normalized_mode)
+        with span("db.detail"):
+            detail = self.conversation_store_service.get_conversation_detail(
+                conversation_id, owner_key=current_owner_key()
+            )
 
         # done 先发：验证还要跑一次 LLM（实测 3~8 秒），不能让它挡在回答前面
         yield {"event": "sources", "data": {"sources": source_docs}}
@@ -390,9 +416,10 @@ class ConversationChatService:
         # 一次 LLM（5~33 秒）——纯烧额度，还让 SSE 连接多挂几十秒。
         if context and normalized_mode != "memory" and not files:
             try:
-                verify_report = self.context_verification_service.generate_verification_report(
-                    answer, context, source_docs
-                )
+                with span("verify"):
+                    verify_report = self.context_verification_service.generate_verification_report(
+                        answer, context, source_docs
+                    )
                 yield {
                     "event": "verification",
                     "data": {
@@ -472,7 +499,8 @@ class ConversationChatService:
             "已拿到的工具结果：\n\n" + "\n\n".join(parts)
         )
         try:
-            return (self._get_qa_llm().invoke(prompt).content or "").strip()
+            with span("agent.finalize"):
+                return (self._get_qa_llm().invoke(prompt).content or "").strip()
         except Exception as exc:
             logger.warning("工具轮次用尽后的收尾调用失败: %s", exc)
             return ""
@@ -500,7 +528,8 @@ class ConversationChatService:
                 "event": "thinking",
                 "data": {"round": round_no + 1, "max_rounds": self._MAX_TOOL_ROUNDS},
             }
-            response = self._get_agent_llm().invoke(messages)
+            with span("agent.round", round=round_no + 1):
+                response = self._get_agent_llm().invoke(messages)
             messages.append(response)
             tool_calls = response.tool_calls or []
             if not tool_calls:
@@ -554,7 +583,8 @@ class ConversationChatService:
         if tool is None:
             return f"工具不存在：{name}", True
         try:
-            return tool.invoke(tool_call.get("args")), False
+            with span(f"tool.{name}"):
+                return tool.invoke(tool_call.get("args")), False
         except Exception as exc:
             logger.warning("工具 %s 执行异常: %s", name, exc)
             return f"工具执行失败：{exc}", True
@@ -616,8 +646,9 @@ class ConversationChatService:
         files: list[dict] = []
         warnings: list[str] = []
         tool_outputs: list[tuple[str, str]] = []
-        for _ in range(self._MAX_TOOL_ROUNDS):
-            response = self._get_agent_llm().invoke(messages)
+        for round_no in range(self._MAX_TOOL_ROUNDS):
+            with span("agent.round", round=round_no + 1):
+                response = self._get_agent_llm().invoke(messages)
             messages.append(response)
             tool_calls = response.tool_calls or []
             if not tool_calls:

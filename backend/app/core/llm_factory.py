@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from functools import lru_cache
 from typing import Any, Iterator, List, Optional
 
@@ -54,6 +55,7 @@ from langchain_core.messages import BaseMessage
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langchain_openai import ChatOpenAI
 
+from app.core import perf_trace
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -118,6 +120,44 @@ def _apply_sampling_fixes(llm: Any, model: str) -> None:
         llm.extra_body = {"enable_thinking": thinking} if _thinking_supported(model) else None
 
 
+def _first_int(source: Any, *keys: str) -> Optional[int]:
+    if not isinstance(source, dict):
+        return None
+    for key in keys:
+        value = source.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+    return None
+
+
+def _result_tokens(result: Any) -> tuple[Optional[int], Optional[int]]:
+    """从一次非流式结果里取 (输入 token, 输出 token)，取不到为 None（不同供应商字段名不同）。"""
+    usage = (getattr(result, "llm_output", None) or {}).get("token_usage")
+    if not usage:
+        try:
+            usage = result.generations[0].message.usage_metadata
+        except (AttributeError, IndexError, TypeError):
+            usage = None
+    return _first_int(usage, "input_tokens", "prompt_tokens"), _first_int(usage, "output_tokens", "completion_tokens")
+
+
+def _chunk_tokens(chunk: Any) -> tuple[Optional[int], Optional[int]]:
+    usage = getattr(getattr(chunk, "message", None), "usage_metadata", None)
+    return _first_int(usage, "input_tokens"), _first_int(usage, "output_tokens")
+
+
+def _record_llm(model: str, started: float, *, fallback: bool, tokens=(None, None), error: Optional[str] = None) -> None:
+    """记录一次 LLM 调用到请求级计时；没有 trace 时直接返回，不影响原有行为。"""
+    perf_trace.record_llm_call(
+        model,
+        (time.perf_counter() - started) * 1000.0,
+        in_tokens=tokens[0],
+        out_tokens=tokens[1],
+        fallback=fallback,
+        error=error,
+    )
+
+
 class QuotaFallbackMixin:
     """额度错误自动降级链，与具体客户端解耦（ChatTongyi / ChatOpenAI 通用）。
 
@@ -153,11 +193,13 @@ class QuotaFallbackMixin:
         for idx, model in enumerate(chain):
             if self.model_name != model:
                 self._switch_to(model)
+            started = time.perf_counter()
             try:
-                return super()._generate(
+                result = super()._generate(
                     messages, stop=stop, run_manager=run_manager, **kwargs
                 )
             except Exception as exc:
+                _record_llm(model, started, fallback=idx > 0, error=type(exc).__name__)
                 if idx < len(chain) - 1 and _is_quota_error(exc):
                     logger.warning(
                         "模型 %s 调用失败（疑似额度/权限问题），尝试降级：%s",
@@ -166,6 +208,8 @@ class QuotaFallbackMixin:
                     )
                     continue
                 raise
+            _record_llm(model, started, fallback=idx > 0, tokens=_result_tokens(result))
+            return result
 
     def _stream(
         self,
@@ -178,6 +222,7 @@ class QuotaFallbackMixin:
         for idx, model in enumerate(chain):
             if self.model_name != model:
                 self._switch_to(model)
+            started = time.perf_counter()
             iterator = super()._stream(
                 messages, stop=stop, run_manager=run_manager, **kwargs
             )
@@ -186,8 +231,10 @@ class QuotaFallbackMixin:
                 # 即可在"零输出"阶段安全降级；一旦已产出内容则不再切换。
                 first_chunk = next(iterator)
             except StopIteration:
+                _record_llm(model, started, fallback=idx > 0)
                 return
             except Exception as exc:
+                _record_llm(model, started, fallback=idx > 0, error=type(exc).__name__)
                 if idx < len(chain) - 1 and _is_quota_error(exc):
                     logger.warning(
                         "模型 %s 流式调用失败（疑似额度/权限问题），尝试降级：%s",
@@ -196,8 +243,23 @@ class QuotaFallbackMixin:
                     )
                     continue
                 raise
-            yield first_chunk
-            yield from iterator
+            last_chunk = first_chunk
+            error: Optional[str] = None
+            try:
+                yield first_chunk
+                for chunk in iterator:
+                    last_chunk = chunk
+                    yield chunk
+            except GeneratorExit:
+                raise  # 消费方提前结束，不算错误
+            except BaseException as exc:
+                error = type(exc).__name__
+                raise
+            finally:
+                close = getattr(iterator, "close", None)
+                if close is not None:
+                    close()
+                _record_llm(model, started, fallback=idx > 0, tokens=_chunk_tokens(last_chunk), error=error)
             return
 
 

@@ -49,6 +49,7 @@ from support import (
     response_json,
     stop_test,
 )
+from trace_support import parse_server_timing, request_row, write_requests
 
 logger = logging.getLogger("loadtest.ai")
 
@@ -142,6 +143,8 @@ class Settings:
     stop_after_failures: int
     min_answer: int
     health_probe_interval: float
+    # 是否给 chat 请求带 X-Perf-Trace: 1（服务端还要开 PERF_TRACE_HEADER=1 才会回 Server-Timing）
+    trace: bool
 
 
 class RunState:
@@ -160,6 +163,8 @@ class RunState:
         self.kept_conversations: list[str] = []
         self.quitting = False
         self.summarized = False
+        self.trace_rows: list[dict] = []
+        self.user_seq = 0
         self.probe: gevent.Greenlet | None = None
         self.manifest: dict | None = None
         self.started_mono = 0.0
@@ -244,6 +249,7 @@ def load_settings(stage: Stage) -> Settings:
         stop_after_failures=_int_env("LT_AI_STOP_AFTER_FAILURES", stage.stop_after_failures, 1, 10),
         min_answer=_int_env("LT_MIN_ANSWER", 5, 1, 1000),
         health_probe_interval=probe_interval,
+        trace=os.getenv("LT_TRACE", "").strip() == "1",
     )
 
 
@@ -333,6 +339,9 @@ def install(stage: Stage) -> Settings:
         prefix = getattr(environment.parsed_options, "csv_prefix", None)
         if prefix:
             write_json(f"{prefix}_ai_summary.json", summary)
+            if RUN.trace_rows:
+                path = write_requests(prefix, RUN.trace_rows)
+                logger.info("逐请求分段计时已写入 %s（%d 行）", path, len(RUN.trace_rows))
         if RUN.manifest is not None:
             RUN.manifest["run"].update(
                 ended_at=datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -433,6 +442,7 @@ def _build_manifest(stage: Stage, settings: Settings, environment, server: dict)
         "run": {
             "label": os.getenv("LT_LABEL", "").strip(),
             "note": os.getenv("LT_NOTE", "").strip(),
+            "trace": settings.trace,
             "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "ended_at": None,
             "duration_s": None,
@@ -512,6 +522,10 @@ def build_summary(stage: Stage, settings: Settings, users: int, ended_reason: st
         "outcomes": dict(RUN.outcomes),
         "slow_over_budget": RUN.slow,
         "slow_budget_ms": int(settings.slow_ms),
+        "trace": settings.trace,
+        "trace_requests": len(RUN.trace_rows),
+        # 服务端没开 PERF_TRACE_HEADER=1 时，请求头带了也拿不到 Server-Timing
+        "server_timing_requests": sum(1 for row in RUN.trace_rows if row["server_total_ms"] != ""),
     }
     if RUN.manifest is not None:
         summary["config_id"] = RUN.manifest["config_id"]
@@ -535,6 +549,17 @@ def format_summary(summary: dict) -> str:
     ]
     if summary["ended_reason"] != "completed":
         lines.append(f"结束原因：{summary['ended_reason']}（实际请求数少于计划时以此解释）")
+    if summary.get("trace"):
+        traced = summary["trace_requests"]
+        with_timing = summary["server_timing_requests"]
+        if not traced:
+            lines.append("分段计时：本轮没有 chat 请求，未产生逐请求记录")
+        elif not with_timing:
+            lines.append(f"分段计时：{traced} 个请求都没拿到 Server-Timing——服务端没开 PERF_TRACE_HEADER=1")
+        elif with_timing < traced:
+            lines.append(f"分段计时：{with_timing}/{traced} 个请求拿到 Server-Timing（缺失的按超时/失败处理）")
+        else:
+            lines.append(f"分段计时：{with_timing}/{traced} 个请求拿到 Server-Timing")
     if summary.get("config_id"):
         lines.append(f"配置指纹：{summary['config_id']}（详见 *_ai_config.json；指纹相同的轮次才可直接比较）")
     outcomes = summary["outcomes"]
@@ -619,6 +644,17 @@ def _record(environment, settings: Settings, kind: str, reason: str | None, elap
         _request_quit(environment, "收到 HTTP 429（限流或额度），立即停止以免继续消耗配额")
     elif RUN.streak >= settings.stop_after_failures:
         _request_quit(environment, f"连续 {RUN.streak} 次失败，停止测试（最近：{reason}）")
+
+
+def _header(response, name: str) -> str | None:
+    """读响应头；连接失败时 Locust 的 response 可能没有 headers，按缺头处理。"""
+    headers = getattr(response, "headers", None)
+    if not headers:
+        return None
+    try:
+        return headers.get(name)
+    except Exception:  # 头对象异常不该影响压测结果判定
+        return None
 
 
 def transport_error(response) -> str | None:
@@ -710,6 +746,8 @@ class AiChatUser(HttpUser):
         self.keep_conversation = False
         self.completed_quota = False
         self.sent = 0
+        RUN.user_seq += 1
+        self.user_index = RUN.user_seq
         if not _is_allowed(self.environment):
             raise StopUser()  # 拒绝原因已在 test_start 记录，这里不再发送任何业务请求
         self.client.trust_env = False
@@ -794,19 +832,26 @@ class AiChatUser(HttpUser):
             raise StopUser()
         self.sent += 1
         started = time.perf_counter()
+        started_at = datetime.now().astimezone().isoformat(timespec="milliseconds")
         self.last_data: dict | None = None
         with self.client.post(
             "/api/v1/conversation/chat",
             json=payload,
             name=f"POST /conversation/chat [{settings.mode}]",
             timeout=(settings.connect_timeout, settings.read_timeout),
+            headers={"X-Perf-Trace": "1"} if settings.trace else None,
             catch_response=True,
         ) as response:
             elapsed_ms = (time.perf_counter() - started) * 1000
             reason = self._chat_error(response, query, elapsed_ms)
+            timing = parse_server_timing(_header(response, "Server-Timing"))
             if reason is not None:
                 response.failure(reason)
         _record(self.environment, settings, "chat", reason, elapsed_ms)
+        # 无论成败都写一行：失败请求的 client_ms 是超时/中断的真实耗时，也能进分位数
+        RUN.trace_rows.append(
+            request_row(self.sent, self.user_index, started_at, elapsed_ms, reason, timing)
+        )
 
         if reason is None:
             self.after_chat_ok(self.last_data)

@@ -88,6 +88,7 @@ def runtime_info() -> dict[str, str]:
         "locust": locust_version,
         "python": platform.python_version(),
         "platform": platform.platform(),
+        "hostname": platform.node(),
         "argv": " ".join(sys.argv[1:]),
     }
 

@@ -244,7 +244,31 @@ $reportDir = "reports\20261025" # 替换为本轮实际日期目录
 
 ## 服务器资源采集（Linux）
 
-建议压测机与服务器分离。以下命令在**被测 Linux 服务器**执行；轻量、只读命令通常无需 root，进程详情/慢查询需相应权限：
+### 自动采样（推荐）
+
+`server_monitor.py` 只用标准库读 `/proc`，每秒一行 CSV，不需要 root，不用装 sysstat：
+
+```bash
+python3 tools/loadtest/server_monitor.py --out reports/20261026 --label s2 --wrap "bash -c '<压测命令>'"
+# 或固定时长；都不给则前台跑，Ctrl+C 结束
+python3 tools/loadtest/server_monitor.py --out reports/20261026 --label s2 --duration 150
+# 需要 MySQL 连接数/慢查询时（凭证放文件，不接受命令行密码）
+python3 tools/loadtest/server_monitor.py --out reports/20261026 --label s2 --wrap "<压测命令>" \
+  --mysql-defaults-file /secure/path/client.cnf
+```
+
+产物：`server-<label>_server.csv`（逐秒采样）、`server-<label>_server_meta.json`（主机名、核数、`MemTotal`、systemd `MainPID`、服务端 git 提交号）。前缀已存在会拒绝覆盖；非 Linux 直接退出，不产生空文件。
+
+```bash
+python3 tools/loadtest/analyze_server.py reports/20261026/server-s2_server.csv \
+  --config reports/20261026/ai-s2_ai_config.json
+```
+
+给了配置清单就按本轮 `run.started_at`~`ended_at` 裁剪窗口。输出每个进程组（backend / locust / mysqld / nginx）的 CPU 均值/P95/峰值与 RSS 峰值，以及 swap 活动、可用内存低于 10%、iowait P95 高于 10%、steal 非零等预警。**预警只陈述事实和阈值，不替你下"已经是瓶颈"的结论。**
+
+### 手工抽查（应急）
+
+以下命令在**被测 Linux 服务器**执行；轻量、只读命令通常无需 root，进程详情/慢查询需相应权限：
 
 ```bash
 # CPU/load、内存/Swap、进程 RSS：测试前和每阶段结束各记录一次
@@ -277,6 +301,38 @@ sudo journalctl -u job-copilot --since "10 minutes ago" --no-pager
 - **外部模型**：只对比 AI 端到端请求与同时段健康/轻量接口；只有供应商 trace/应用内部阶段计时才能把模型等待从后端/DB 中剥离。禁止从普通接口 P95 推断 LLM 时延。
 
 建议记录人工停止条件：连续 3 次 5xx、最近 50 请求失败率 >10%、滚动 P95 高于预设阈值、超时增加、CPU/内存预警或线上业务告警。Locust 只能按请求错误和延迟自动停止；远端 CPU、内存、MySQL 与网络需人工监看。
+
+## 后端分段计时（Server-Timing）
+
+后端把一次 chat 拆成 `db` / `init` / `compress` / `retrieve` / `rerank` / `answer` / `agent` / `tool` / `verify` / `llm`，两个输出口子：
+
+- **日志**：每个 chat 请求一行 `PERF {json}` 进 journal，`PERF_TRACE_LOG` 默认开启。`journalctl -u job-copilot | grep "PERF "` 可看，不含问题和回答文本。
+- **响应头**：`Server-Timing`，**默认关闭**。压测期间在服务端 `.env` 加 `PERF_TRACE_HEADER=1` 并重启，且请求带 `X-Perf-Trace: 1` 才返回；两个条件缺一不可，避免平时向外部暴露内部耗时。压完记得改回。
+
+| 字段 | 含义 |
+|---|---|
+| `total` | 服务端从进端点读到返回的总耗时 |
+| `db` / `compress` / `retrieve` / `answer` / `agent` / `tool` / `verify` | 顶层阶段，**互不重叠**，相加不会超过 `total` |
+| `rerank`（`desc="of:sub"`） | `retrieve` 的子阶段，不能与 `retrieve` 相加 |
+| `llm`（`desc="n=3"`） | 所有模型调用的合计，跨阶段重叠，`n` 是次数 |
+
+采集：
+
+```powershell
+# -Trace 让每个 chat 请求带 X-Perf-Trace: 1；服务端没开 PERF_TRACE_HEADER=1 时服务端列全空
+.\tools\loadtest\run_ai_stage.ps1 -Stage 2 -Label s2 -Trace -ServerCommit <sha>
+```
+
+产物 `<前缀>_ai_requests.csv`：`seq`（该用户第几次请求）、`user`、`client_ms`、`server_total_ms`、`st_*` 各阶段、`llm_calls`。失败请求也写一行，服务端列留空、`client_ms` 是超时/中断的真实耗时。汇总里会打印"N/M 个请求拿到 Server-Timing"，拿到 0 就是服务端开关没开。
+
+```bash
+python3 tools/loadtest/analyze_trace.py reports/20261026/ai-s2a_ai_requests.csv \
+  reports/20261026/ai-s2b_ai_requests.csv
+```
+
+输出阶段 P50/P95/share、`client_ms - server_total_ms` 差值（网络+排队）、以及按"每个用户第 N 次请求"分组的表——慢请求如果固定出现在第 7~10 次，会在这张表里看见，并对上 `compress` 那一列。跨轮次只允许比较 `config_id` 相同的运行，指纹不同会列出差异并拒绝汇总。
+
+限制：`Server-Timing` 只做在非流式 `/conversation/chat`，**不能拿它当线上流式用户的 TTFT**；流式请求的分段只进 PERF 日志（字段 `ttft_ms`、`done_ms`）。流式下供应商通常不回流式 token 用量，`llm_calls` 可能为空。
 
 ## 验证与限制
 
