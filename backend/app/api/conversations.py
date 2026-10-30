@@ -131,6 +131,7 @@ def conversation_chat(
     query = payload.query.strip()
     image_urls = [item.strip() for item in payload.image_urls if item and item.strip()]
     skill = (payload.skill or "").strip()
+    skill_option = (payload.skill_option or "").strip()
 
     if not conversation_id:
         return fail("conversation_id 参数不能为空", code=400)
@@ -145,7 +146,7 @@ def conversation_chat(
             payload.model, role
         ), request_conversation_scope(conversation_id), request_owner_scope(owner_key):
             result = get_conversation_chat_service().chat(
-                conversation_id, query, payload.mode, image_urls, skill
+                conversation_id, query, payload.mode, image_urls, skill, skill_option
             )
     except ValueError as exc:
         return fail(str(exc), code=400)
@@ -169,6 +170,7 @@ def conversation_chat_stream(
     query = payload.query.strip()
     image_urls = [item.strip() for item in payload.image_urls if item and item.strip()]
     skill = (payload.skill or "").strip()
+    skill_option = (payload.skill_option or "").strip()
 
     if not conversation_id:
         return fail("conversation_id 参数不能为空", code=400)
@@ -195,7 +197,7 @@ def conversation_chat_stream(
         # 恰好炸在 done 之后的验证阶段——用户看到的是"字打完了又冒出一段报错"。
         # 这里把整个生成器固定在同一个 context 里驱动，模型作用域在整条流上保持一致。
         iterator = get_conversation_chat_service().chat_stream(
-            conversation_id, query, payload.mode, image_urls, skill
+            conversation_id, query, payload.mode, image_urls, skill, skill_option
         )
         # 计时作用域必须和模型作用域一样在生成器内部开启：端点里 with 一下就退出时，
         # 生成器还没被消费，整条流的耗时不会被记到任何 trace 上。

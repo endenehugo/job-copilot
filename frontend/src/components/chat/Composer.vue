@@ -34,6 +34,17 @@ const skillOpen = ref(false)
 const skillIndex = ref(0)
 const selectedSkill = ref(null)
 const skillLoading = ref(false)
+
+// project-guide 一次会产出导学 + 面经两份长文件（实测单次请求 278 秒、1.9 万输出
+// token）。让用户在发送前选清楚范围，单次生成量就能减半；服务端按这个值在
+// 技能指南里写死"只出哪一份"。其他技能不显示这个控件。
+const SKILL_SCOPE_OPTIONS = [
+  { value: 'guide', label: '导学', hint: '只生成导学-{简称}.md' },
+  { value: 'interview', label: '面经', hint: '只生成面经-{简称}.md' },
+  { value: 'both', label: '两份', hint: '导学和面经都生成，耗时约为单份的两倍' },
+]
+const skillOption = ref('both')
+const isProjectGuide = computed(() => selectedSkill.value?.name === 'project-guide')
 // 自动弹一次：只在本标签页首次聚焦空输入框时弹。
 // 用 sessionStorage 而不是 localStorage——永久记住等于让这个入口消失
 const hintSeen = ref(sessionStorage.getItem('jc_skill_hint_seen') === '1')
@@ -90,7 +101,10 @@ async function send() {
   await nextTick()
   autosize()
   try {
-    await chat.sendStream(query, { skill: selectedSkill.value?.name || '' })
+    await chat.sendStream(query, {
+      skill: selectedSkill.value?.name || '',
+      skillOption: isProjectGuide.value ? skillOption.value : '',
+    })
   } catch (err) {
     notifyError(err)
   }
@@ -167,12 +181,15 @@ async function openSkillMenu() {
 function pickSkill(item) {
   if (!item) return
   selectedSkill.value = item
+  // 换技能时把范围重置回默认，避免上一个技能的选项残留到下一个技能
+  skillOption.value = 'both'
   skillOpen.value = false
   ta.value?.focus()
 }
 
 function clearSkill() {
   selectedSkill.value = null
+  skillOption.value = 'both'
 }
 
 function onOpenSkills() {
@@ -294,6 +311,8 @@ async function onFilesChange(e) {
       // 资料库抽屉与简历版本都读会话 detail，这里同步一次；
       // 正在流式生成时不刷新，避免把半截回答覆盖掉
       if (!chat.sending) await conv.refreshDetail().catch(() => {})
+      // 空态上传时服务端会把会话标题改成文档名，标题在列表数据里，得单独刷
+      conv.loadList().catch(() => {})
       resume.load(conv.currentId).catch(() => {})
     }
   } catch (err) {
@@ -365,6 +384,20 @@ async function onFilesChange(e) {
       <div v-if="selectedSkill" class="composer-skill">
         <AppIcon name="sparkle" :size="13" class="composer-skill-icon" />
         <span class="composer-skill-name">{{ selectedSkill.title }}</span>
+        <!-- 产出范围：只在 project-guide 下出现，默认"两份"（等价于旧行为） -->
+        <div v-if="isProjectGuide" class="composer-skill-scope" role="group" aria-label="生成范围">
+          <button
+            v-for="opt in SKILL_SCOPE_OPTIONS"
+            :key="opt.value"
+            type="button"
+            class="scope-opt"
+            :class="{ 'is-active': skillOption === opt.value }"
+            :title="opt.hint"
+            @click="skillOption = opt.value"
+          >
+            {{ opt.label }}
+          </button>
+        </div>
         <button class="composer-skill-remove" title="取消技能" @click="clearSkill">
           <AppIcon name="close" :size="11" />
         </button>

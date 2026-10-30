@@ -68,7 +68,9 @@ async function onFileChange(e) {
     form.append('file', file)
     await documentApi.upload(form)
     ElMessage.success('上传成功，索引建立中…')
-    await Promise.all([conv.refreshDetail(), resume.load(conv.currentId)])
+    // loadList 是必需的：空态上传会让服务端把会话标题从「新对话」改成文档名，
+    // 标题在列表数据里，只刷 detail 看不到变化
+    await Promise.all([conv.refreshDetail(), resume.load(conv.currentId), conv.loadList()])
     startPolling() // 轮询直到 indexed/failed
   } catch (err) {
     notifyError(err)

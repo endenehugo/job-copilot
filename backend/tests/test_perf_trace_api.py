@@ -26,7 +26,7 @@ class FakeChatService:
     def __init__(self, fail: Exception | None = None):
         self.fail = fail
 
-    def chat(self, conversation_id, query, mode, image_urls, skill=""):
+    def chat(self, conversation_id, query, mode, image_urls, skill="", skill_option=""):
         if self.fail is not None:
             raise self.fail
         with pt.span("db.history"):
@@ -35,7 +35,7 @@ class FakeChatService:
             pt.record_llm_call("m", 3.0)
         return {"answer": "答案", "original_answer": "答案", "conversation": {}, "sources": [], "files": []}
 
-    def chat_stream(self, conversation_id, query, mode, image_urls, skill=""):
+    def chat_stream(self, conversation_id, query, mode, image_urls, skill="", skill_option=""):
         with pt.span("db.history"):
             pass
         yield {"event": "meta", "data": {"conversation_id": conversation_id}}

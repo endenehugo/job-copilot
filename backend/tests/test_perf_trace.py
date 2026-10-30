@@ -491,7 +491,9 @@ def test_stream_memory_emits_spans_and_events_are_unchanged():
     names = _names(t)
     for expected in ("db.writable", "compress", "answer", "db.save", "db.detail"):
         assert expected in names, names
-    assert [e["event"] for e in events] == ["meta", "delta", "sources", "done"]
+    # memory 模式不检索，source_docs 恒为空；空 sources 事件没有意义，不再下发
+    # （有文件产物时也不发，避免"参考来源"被误读成引用了用户上传的旧文档）
+    assert [e["event"] for e in events] == ["meta", "delta", "done"]
 
 
 def test_stream_agent_records_streamed_round_and_tool_rounds():

@@ -851,6 +851,53 @@ sup.cite-ref {
   cursor: default;
 }
 
+/* 思考过程：模型开思考时首字要等几十秒，折叠区让这段空白可见。
+   流式期间默认展开，收到 done 后由 :open 绑定自动收起。 */
+.msg-thinking {
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-sunken);
+  font-size: 12.5px;
+}
+.msg-thinking-head {
+  padding: 6px 10px;
+  color: var(--text-3);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.msg-thinking-head::-webkit-details-marker {
+  display: none;
+}
+.msg-thinking-head::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 6px;
+  transition: transform 0.15s ease;
+}
+.msg-thinking[open] .msg-thinking-head::before {
+  transform: rotate(90deg);
+}
+.msg-thinking-count {
+  margin-left: 8px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+/* 固定高度 + 滚动：思考可能有上万字，不能让它把气泡撑到屏幕外 */
+.msg-thinking-body {
+  max-height: 240px;
+  overflow: auto;
+  padding: 0 10px 8px;
+  color: var(--text-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 /* 工具链状态 */
 .msg-tool {
   display: inline-flex;
@@ -1238,6 +1285,32 @@ sup.cite-ref {
 .composer-skill-remove:hover {
   background: var(--line);
   color: var(--text-1);
+}
+/* project-guide 的产出范围：三选一，默认"两份"（等价于旧行为） */
+.composer-skill-scope {
+  display: inline-flex;
+  gap: 1px;
+  padding: 1px;
+  border-radius: 999px;
+  background: var(--surface-1);
+}
+.scope-opt {
+  padding: 1px 7px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.scope-opt:hover {
+  color: var(--text-1);
+}
+.scope-opt.is-active {
+  background: var(--accent);
+  color: #fff;
 }
 .composer-attach {
   display: flex;

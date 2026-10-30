@@ -20,6 +20,10 @@ class ChatRequest(BaseModel):
     # 用户在输入框显式选择的技能名；空串 = 交给模型自行判断。
     # 非空时服务端在系统提示后插入该技能的指南，且不再让模型 load_skill。
     skill: str = ""
+    # 产出范围（仅 project-guide 使用）：guide / interview / both，空串按 both。
+    # 该技能的交付物是导学 + 面经两份文件，一次全出接近 1.9 万输出 token，
+    # 由用户先选清楚能把单次生成量减半。其他技能忽略此字段。
+    skill_option: str = ""
 
 
 class DeleteConversationRequest(BaseModel):

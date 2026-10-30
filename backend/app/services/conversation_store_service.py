@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import uuid
 from dataclasses import dataclass
@@ -368,7 +369,16 @@ class ConversationStoreService:
                     created_at=now,
                     updated_at=now,
                 )
-                self.conversation_repository.update_summary(conversation, updated_at=now)
+                # 纯上传建出来的会话（空态选文件 → 前端自动建会话 → 上传）没有消息，
+                # append_message_pair 里的自动标题永远不会触发，列表里一直叫「新对话」，
+                # 事后根本认不出是哪个。这里用文档名补一个概要，条件与自动标题一致：
+                # 只在没有消息、标题仍是默认值时生效，用户先发言再上传时不会覆盖。
+                title = conversation.title
+                if conversation.message_count == 0 and title == "新对话":
+                    stem = os.path.splitext(parsed_document["original_name"] or "")[0].strip()
+                    if stem:
+                        title = stem[:20]
+                self.conversation_repository.update_summary(conversation, title=title, updated_at=now)
             return self._document_to_dict(document)
         finally:
             session.close()

@@ -102,6 +102,41 @@ const toolLabel = computed(() => {
   return `正在调用 ${toolName(st.name)} · 第 ${st.step} 步`
 })
 
+// 思考过程：模型开思考时首字要等几十秒，这期间只有 reasoning_content 在增长。
+// 折叠区默认展开（等待时用户需要看到东西），流结束后自动收起。
+// 只渲染末尾一段——长文档任务能产生一两万字的思考，全量塞进 DOM 会拖慢重排。
+const THINKING_MAX_CHARS = 4000
+const thinkingShown = ref('')
+let thinkingTimer = null
+
+function tailOf(text) {
+  const value = text || ''
+  if (value.length <= THINKING_MAX_CHARS) return value
+  return `…（已省略前 ${value.length - THINKING_MAX_CHARS} 字）\n${value.slice(-THINKING_MAX_CHARS)}`
+}
+
+watch(
+  () => props.message.reasoning,
+  () => {
+    // 逐 token 更新，150ms 节流；流结束时立刻补最后一次，保证尾部完整
+    if (!props.message.streaming) {
+      if (thinkingTimer) {
+        clearTimeout(thinkingTimer)
+        thinkingTimer = null
+      }
+      thinkingShown.value = tailOf(props.message.reasoning)
+      return
+    }
+    if (thinkingTimer) return
+    thinkingTimer = setTimeout(() => {
+      thinkingTimer = null
+      thinkingShown.value = tailOf(props.message.reasoning)
+    }, 150)
+  },
+  { immediate: true }
+)
+onUnmounted(() => clearTimeout(thinkingTimer))
+
 function formatElapsed(seconds) {
   if (seconds < 60) return `${seconds}s`
   return `${Math.floor(seconds / 60)}m${String(seconds % 60).padStart(2, '0')}s`
@@ -130,6 +165,15 @@ onUnmounted(() => clearTimeout(copyTimer))
 
     <!-- 助手：无头像、无气泡、整列纯文本 -->
     <div v-else class="msg-assistant">
+      <!-- 思考过程：只在本次流式期间存在，刷新即消失（不落库） -->
+      <details v-if="message.reasoning" class="msg-thinking" :open="!!message.streaming">
+        <summary class="msg-thinking-head">
+          {{ message.streaming ? '思考中…' : '思考过程' }}
+          <span class="msg-thinking-count">{{ message.reasoning.length }} 字</span>
+        </summary>
+        <div class="msg-thinking-body">{{ thinkingShown }}</div>
+      </details>
+
       <div v-if="message.streaming && message.toolStatus" class="msg-tool">
         <span class="msg-tool-dot"></span>
         {{ toolLabel }}

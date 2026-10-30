@@ -29,6 +29,11 @@ export const useChatStore = defineStore('chat', {
       // 只中断前端接收；后端会继续生成并落库，之后切回该会话能看到完整回答
       this.streamController?.abort()
       this.streamController = null
+      // sending 必须在这里收尾：abort 之后 done 事件不会再来，而 sendStream 的
+      // finally 要靠 controller 身份判断，凭证已被清掉 → 判断恒为假 → sending
+      // 永远停在 true，整个页面再也发不出消息（切会话、点"新对话"、点"停止生成"
+      // 都会走到这里）。
+      this.sending = false
     },
     loadFromDetail(detail) {
       const cid = useConversationStore().currentId || ''
@@ -121,6 +126,7 @@ export const useChatStore = defineStore('chat', {
             mode: 'agent',
             image_urls: images,
             skill: options.skill || '',
+            skill_option: options.skillOption || '',
           })
         )
         this.messages.push({
@@ -152,6 +158,10 @@ export const useChatStore = defineStore('chat', {
       const assistantMsg = reactive({
         role: 'assistant',
         content: '',
+        // 模型的思考过程（reasoning_content）。只在前端内存里，不进 messages、
+        // 不落库——一次长文档任务能产生上万 token 的思考，写进历史会让下一轮
+        // 输入直接翻倍。刷新页面就没了，这是有意的。
+        reasoning: '',
         sources: null,
         verification: null,
         files: null,
@@ -198,6 +208,7 @@ export const useChatStore = defineStore('chat', {
               mode: 'agent',
               image_urls: images,
               skill: options.skill || '',
+              skill_option: options.skillOption || '',
             })
           ),
           signal: controller.signal,
@@ -221,6 +232,10 @@ export const useChatStore = defineStore('chat', {
             if (!event) continue
             if (event.event === 'delta') {
               assistantMsg.content += event.data.text || ''
+            } else if (event.event === 'thinking_delta') {
+              // 思考过程：只累加用于展示，绝不并进 content——否则会被当成回答
+              // 存进历史，也会污染 done 里的最终内容
+              assistantMsg.reasoning += event.data.text || ''
             } else if (event.event === 'tool_status') {
               // agent 工具链进度：替换式更新，气泡内显示当前正在执行的工具
               assistantMsg.toolStatus = event.data
@@ -249,7 +264,9 @@ export const useChatStore = defineStore('chat', {
               // 实测 5~33 秒）。那只是给已有内容补引用标注，不该继续按住输入框：
               // 用户在气泡里看到答案后想追问，被锁着几十秒会以为页面卡死。
               // 解锁只在这里做，finally 里用控制器身份兜住并发场景。
-              this.sending = false
+              // 这里同样要判身份：旧流的 done 若在用户已经发了新消息之后才到达，
+              // 无条件置 false 会把新请求的发送锁解开。
+              if (this.streamController === controller) this.sending = false
             } else if (event.event === 'error') {
               streamError = event.data.message
             }
@@ -270,7 +287,9 @@ export const useChatStore = defineStore('chat', {
         conv.loadList().catch(() => {})
       } catch (err) {
         assistantMsg.streaming = false
-        if (!this.messages.includes(assistantMsg)) {
+        // 主动中断（stopStreaming）不是错误：这时气泡可能已被新会话的 detail 替换，
+        // 按原来的"气泡不在列表里就抛出"会把 AbortError 当异常弹给用户。
+        if (err.name !== 'AbortError' && !this.messages.includes(assistantMsg)) {
           // 建会话阶段就失败、气泡尚未上屏：交还调用方提示（Composer 的 notifyError）
           throw err
         }

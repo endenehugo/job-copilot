@@ -234,7 +234,17 @@ class ConversationChatService:
     # 技能指南注入上限：最长的 project-guide 约 13.4k 字符，留一点余量
     _MAX_SKILL_CHARS = 14000
 
-    def _apply_skill(self, messages: list, skill: str) -> list:
+    # project-guide 的产出范围：这份技能的交付物是导学 + 面经两份长文件，
+    # 一次全出接近 1.9 万输出 token（实测单次请求 278 秒）。让用户先选清楚，
+    # 单次生成量就能减半，而不用在传输层拆两次请求。
+    # 注意这些字符串里的 {简称} 是给模型看的占位，不要改成 f-string。
+    _SKILL_SCOPE_TEXT = {
+        "guide": "本次只产出「导学」这一份（导学-{简称}.md），不要生成面经文件。",
+        "interview": "本次只产出「面经」这一份（面经-{简称}.md），不要生成导学文件。",
+        "both": "本次产出导学和面经两份文件。",
+    }
+
+    def _apply_skill(self, messages: list, skill: str, option: str = "") -> list:
         """把用户显式选择的技能指南插到系统提示之后。
 
         这里是**消息内容**，不是 ChatPromptTemplate 的模板文本，花括号不需要转义
@@ -261,15 +271,28 @@ class ConversationChatService:
             if len(document) > self._MAX_SKILL_CHARS:
                 document = document[: self._MAX_SKILL_CHARS] + "\n\n（指南过长，已截断）"
             meta = skill_loader.skill_meta(skill)
-            body = (
-                f"【本次任务技能】用户显式选择了技能 `{skill}`（{meta['title']}）。\n"
-                "完整操作指南已附在下方，请严格按它组织回答，不要再调用 load_skill。\n"
-                "如果用户这个问题与该技能明显无关，先用一句话确认是否仍按该技能处理，不要硬套。\n\n"
-                + document
-            )
+            if skill == "project-guide":
+                # 两份约束同时下：只出用户选的那一份 + 不要在回答里复述正文。
+                # 后者是为了修掉"先把 7,716 token 正文流出来、再用工具把同样内容
+                # 写一遍"的重复生成（线上实测占掉首轮 117 秒）。
+                scope = self._SKILL_SCOPE_TEXT.get(option) or self._SKILL_SCOPE_TEXT["both"]
+                body = (
+                    f"【本次任务技能】用户显式选择了技能 `project-guide`（{meta['title']}）。\n"
+                    f"{scope}\n"
+                    "直接调用 html_document_tool 把内容写入文件，不要调用 load_skill。\n"
+                    "回答里只写两三句说明、文件用途和必要缺口，不要在回答里复述文件正文。\n\n"
+                    + document
+                )
+            else:
+                body = (
+                    f"【本次任务技能】用户显式选择了技能 `{skill}`（{meta['title']}）。\n"
+                    "完整操作指南已附在下方，请严格按它组织回答，不要再调用 load_skill。\n"
+                    "如果用户这个问题与该技能明显无关，先用一句话确认是否仍按该技能处理，不要硬套。\n\n"
+                    + document
+                )
         return [messages[0], SystemMessage(content=body), *messages[1:]]
 
-    def chat(self, conversation_id: str, query: str, mode: str = "agent", image_urls: list[str] | None = None, skill: str = "") -> dict:
+    def chat(self, conversation_id: str, query: str, mode: str = "agent", image_urls: list[str] | None = None, skill: str = "", skill_option: str = "") -> dict:
         (
             normalized_mode,
             effective_query,
@@ -293,7 +316,7 @@ class ConversationChatService:
                 "history": self._build_history(compressed_history),
                 "context": context,
             }).to_messages()
-            prompt_messages = self._apply_skill(prompt_messages, skill)
+            prompt_messages = self._apply_skill(prompt_messages, skill, skill_option)
 
             if normalized_mode == "agent":
                 answer, files, tool_warnings = self._invoke_agent(prompt_messages, effective_query)
@@ -332,13 +355,14 @@ class ConversationChatService:
             "original_answer": answer,
             "conversation": detail,
             "verification": verification_result,
-            "sources": source_docs,
+            # 同 chat_stream：产出文件的那一轮不返回检索来源，避免误读成"参考了旧简历"
+            "sources": [] if files else source_docs,
             "files": files,
             # 工具链异常结束的告警；API 层弹出后转为信封 degraded/warnings
             "warnings": tool_warnings,
         }
 
-    def chat_stream(self, conversation_id: str, query: str, mode: str = "agent", image_urls: list[str] | None = None, skill: str = ""):
+    def chat_stream(self, conversation_id: str, query: str, mode: str = "agent", image_urls: list[str] | None = None, skill: str = "", skill_option: str = ""):
         """流式问答生成器，产出 SSE 事件：meta -> delta* -> sources -> files -> done -> verification。
 
         注意 verification 排在 done 之后：上下文校验要再跑一次 LLM（实测 3~8 秒），
@@ -379,7 +403,7 @@ class ConversationChatService:
                 "history": self._build_history(compressed_history),
                 "context": context,
             }).to_messages()
-            prompt_messages = self._apply_skill(prompt_messages, skill)
+            prompt_messages = self._apply_skill(prompt_messages, skill, skill_option)
 
             if normalized_mode == "agent":
                 streamed_text = ""
@@ -390,6 +414,12 @@ class ConversationChatService:
                 try:
                     for chunk in self._get_agent_llm().stream(prompt_messages):
                         merged = chunk if merged is None else merged + chunk
+                        # 思考内容逐字下发。qwen3 系默认开思考，思考期间 content 为空，
+                        # 线上实测首字要等 81 秒——这段不推，用户只能盯着空白气泡。
+                        # 只做展示：不进 streamed_text，不落库，见 API 层的 thinking_delta。
+                        reasoning = (chunk.additional_kwargs or {}).get("reasoning_content")
+                        if reasoning:
+                            yield {"event": "thinking_delta", "data": {"text": reasoning}}
                         if chunk.content:
                             streamed_text += chunk.content
                             yield {"event": "delta", "data": {"text": chunk.content}}
@@ -432,7 +462,11 @@ class ConversationChatService:
             )
 
         # done 先发：验证还要跑一次 LLM（实测 3~8 秒），不能让它挡在回答前面
-        yield {"event": "sources", "data": {"sources": source_docs}}
+        # 有文件产物时不发 sources：生成类任务（简历/导学）的检索结果和回答没有
+        # 因果关系——简历走 resume_generate_tool 读会话素材，导学靠技能指南。
+        # 照发只会让用户以为"它去翻了我上传的旧简历"。与下面 context 校验的判断一致。
+        if source_docs and not files:
+            yield {"event": "sources", "data": {"sources": source_docs}}
         if files:
             yield {"event": "files", "data": {"files": files}}
         done_data = {

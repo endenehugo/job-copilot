@@ -104,3 +104,25 @@ def test_apply_skill_is_noop_for_empty_or_broken_skill(service, real_skills_root
 
     assert service._apply_skill(messages, "") is messages
     assert service._apply_skill(messages, "no-such-skill") is messages
+
+
+def test_apply_skill_project_guide_scope_and_no_restate(service, real_skills_root):
+    """project-guide 要同时下两个约束：只出选定的一份 + 不要在回答里复述正文。
+
+    前者是 E2（用户在前端选 导学/面经/两份），后者是 A（线上实测首轮会把
+    7,716 token 的正文先流一遍、再用 html_document_tool 把同样内容写一遍）。
+    """
+    messages = [SystemMessage(content="系统提示"), HumanMessage(content="整理项目导学")]
+
+    guide = service._apply_skill(messages, "project-guide", "guide")[1].content
+    assert "只产出「导学」" in guide and "不要生成面经" in guide
+    assert "不要在回答里复述文件正文" in guide
+
+    interview = service._apply_skill(messages, "project-guide", "interview")[1].content
+    assert "只产出「面经」" in interview and "不要生成导学" in interview
+
+    # 未指定、或前端残留了非法值：一律按"两份"，与改动前行为一致
+    both = service._apply_skill(messages, "project-guide", "")[1].content
+    assert "两份" in both
+    assert "不要在回答里复述文件正文" in both
+    assert "本次任务技能" in both and "project-guide" in both
