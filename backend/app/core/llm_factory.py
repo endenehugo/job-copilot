@@ -305,6 +305,35 @@ class CompatibleFallbackChatModel(QuotaFallbackMixin, ChatOpenAI):
     # 由 _apply_sampling_fixes 按目标模型是否支持重新写进 extra_body。
     base_enable_thinking: Optional[bool] = None
 
+    def _convert_chunk_to_generation_chunk(
+        self, chunk: dict, default_chunk_class: Any, base_generation_info: Optional[dict]
+    ) -> Any:
+        """把百炼的 `delta.reasoning_content` 补回 additional_kwargs。
+
+        langchain-openai 0.3.x 的 `_convert_delta_to_message_chunk` 只认
+        content / tool_calls / audio，遇到 reasoning_content 直接丢弃。而 qwen3 系
+        默认开思考，思考期间 content 为空——不补这一步，上层完全看不到那几十秒
+        在干什么（线上实测首字要等 81 秒），前端只能显示空白气泡。
+
+        只补流式：非流式就整段拿，没有展示价值，也不参与落库。
+        """
+        generation_chunk = super()._convert_chunk_to_generation_chunk(
+            chunk, default_chunk_class, base_generation_info
+        )
+        if generation_chunk is None:
+            return None
+        try:
+            choices = chunk.get("choices") or chunk.get("chunk", {}).get("choices") or []
+            if not choices:
+                return generation_chunk
+            delta = (choices[0] or {}).get("delta") or {}
+        except (AttributeError, IndexError, TypeError):
+            return generation_chunk
+        reasoning = delta.get("reasoning_content")
+        if reasoning:
+            generation_chunk.message.additional_kwargs["reasoning_content"] = reasoning
+        return generation_chunk
+
 
 def _resolve_timeout(streaming: bool, timeout: int | None) -> int:
     if timeout is not None:
