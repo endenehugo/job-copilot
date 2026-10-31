@@ -136,6 +136,38 @@ def test_record_usage_disabled_by_settings(monkeypatch):
     assert _rows() == []
 
 
+def test_record_usage_does_not_close_caller_transaction(monkeypatch):
+    """外层已有事务时，计量只搭车写入，不能把调用方的事务关掉。
+
+    scoped_session 是线程内共享的，remove() 等价 close()：修之前 record_usage
+    的 finally 会把外层未提交的改动一起静默回滚（register_generated_file 踩过
+    同款坑），而且不报错，只是数据消失。
+    """
+    from app.repositories.llm_usage_repository import LlmUsageRepository
+
+    monkeypatch.setattr(settings, "llm_usage_log", True)
+    session = DatabaseManager.get_session()
+    with session.begin():
+        LlmUsageRepository().create(
+            session,
+            created_at=datetime.now(),
+            owner_key="caller",
+            model="caller-model",
+            purpose="chat",
+            in_tokens=1,
+            out_tokens=1,
+            duration_ms=1.0,
+            fallback=False,
+            error=None,
+            trace_id="callertrace1",
+        )
+        # 事务归调用方：这里必须只 flush，commit 与 close 都由外层负责
+        record_usage(model="probe", duration_ms=2.0, in_tokens=5, out_tokens=5)
+
+    # 两行都得活着：一行业务写入，一行计量
+    assert len(_rows()) == 2
+
+
 def test_record_usage_failure_never_raises(monkeypatch):
     """落库炸了也不能把 LLM 调用挂掉；连续 3 次失败后熔断停写。"""
     calls = {"n": 0}

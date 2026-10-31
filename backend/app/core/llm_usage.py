@@ -24,11 +24,35 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime, time as dt_time
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+@contextmanager
+def _usage_session():
+    """借一个本线程的 session，并决定谁负责关闭它。
+
+    scoped_session 是线程内共享的：调用方可能正开着事务（register_generated_file
+    踩过这个坑），这时 close 会把外层没提交的改动一起静默回滚。所以只有
+    "本次自己开的" session 才由自己关，借来的原样交还，也不替调用方 commit。
+    """
+    from app.repositories import DatabaseManager
+
+    session = DatabaseManager.get_session()
+    borrowed = session.in_transaction()
+    try:
+        if borrowed:
+            yield session
+        else:
+            with session.begin():
+                yield session
+    finally:
+        if not borrowed:
+            DatabaseManager.remove_session()
 
 # ---------------------------------------------------------------------------
 # 落库熔断器：连续失败 N 次后停写一段时间，期间 record_usage 直接返回。
@@ -103,24 +127,15 @@ def record_usage(
         "trace_id": trace.trace_id if trace is not None else "",
     }
     # 延迟导入：repositories 依赖 mysql_base 的引擎惰性初始化，模块加载期不动它
-    from app.repositories import DatabaseManager
     from app.repositories.llm_usage_repository import LlmUsageRepository
 
-    session = DatabaseManager.get_session()
     try:
-        if session.in_transaction():
-            # 外层有事务（少见，但 register_generated_file 踩过）：挂到外层，
-            # 只 flush 不 commit——commit 的时机归调用方
+        with _usage_session() as session:
             LlmUsageRepository().create(session, **row)
-        else:
-            with session.begin():
-                LlmUsageRepository().create(session, **row)
         _mark_success()
     except Exception as exc:
         _mark_failure()
         logger.warning("llm_usage 落库失败（不影响业务）：%s", exc)
-    finally:
-        DatabaseManager.remove_session()
 
 
 # ---------------------------------------------------------------------------
@@ -142,31 +157,28 @@ def check_chat_quota(role: str, owner_key: str) -> tuple[int, str] | None:
         return 429, "身份校验失败，请刷新页面后重试"
 
     since = day_start()
-    from app.repositories import DatabaseManager
     from app.repositories.llm_usage_repository import LlmUsageRepository
 
-    session = DatabaseManager.get_session()
     try:
-        repo = LlmUsageRepository()
-        if settings.visitor_daily_chat_limit > 0:
-            chats = repo.count_chat_traces(session, owner_key, since)
-            if chats >= settings.visitor_daily_chat_limit:
-                return (
-                    429,
-                    f"今日体验次数已用完（每天 {settings.visitor_daily_chat_limit} 次），"
-                    "明天再来吧～",
-                )
-        if settings.global_daily_token_limit > 0:
-            tokens = repo.sum_tokens_since(session, since)
-            if tokens >= settings.global_daily_token_limit:
-                return 429, "今日全站体验额度已用完，明天再来吧～"
-        return None
+        with _usage_session() as session:
+            repo = LlmUsageRepository()
+            if settings.visitor_daily_chat_limit > 0:
+                chats = repo.count_chat_traces(session, owner_key, since)
+                if chats >= settings.visitor_daily_chat_limit:
+                    return (
+                        429,
+                        f"今日体验次数已用完（每天 {settings.visitor_daily_chat_limit} 次），"
+                        "明天再来吧～",
+                    )
+            if settings.global_daily_token_limit > 0:
+                tokens = repo.sum_tokens_since(session, since)
+                if tokens >= settings.global_daily_token_limit:
+                    return 429, "今日全站体验额度已用完，明天再来吧～"
+            return None
     except Exception as exc:
         # 配额查询失败时放行：宁可多烧一点额度，也不能让计量故障打挂聊天
         logger.warning("配额查询失败，本次放行：%s", exc)
         return None
-    finally:
-        DatabaseManager.remove_session()
 
 
 # ---------------------------------------------------------------------------
@@ -185,16 +197,12 @@ def _percentile(values: list[float], q: float) -> float:
 def admin_summary(since: datetime | None = None) -> dict:
     """时间范围内的总量、按模型、按用途、配额水位、用量 Top 访客。"""
     start = since or day_start()
-    from app.repositories import DatabaseManager
     from app.repositories.llm_usage_repository import LlmUsageRepository
 
-    session = DatabaseManager.get_session()
-    try:
+    with _usage_session() as session:
         repo = LlmUsageRepository()
         rows = repo.list_since(session, start)
         top_owners = repo.top_owners_since(session, start)
-    finally:
-        DatabaseManager.remove_session()
 
     total_in = sum(r.in_tokens or 0 for r in rows)
     total_out = sum(r.out_tokens or 0 for r in rows)
@@ -249,28 +257,21 @@ def admin_summary(since: datetime | None = None) -> dict:
 
 def repo_sum_tokens_today() -> int:
     """今天已烧的 token（全站口径），给配额水位展示用。查询失败返回 -1（前端显示 --）。"""
-    from app.repositories import DatabaseManager
     from app.repositories.llm_usage_repository import LlmUsageRepository
 
-    session = DatabaseManager.get_session()
     try:
-        return LlmUsageRepository().sum_tokens_since(session, day_start())
+        with _usage_session() as session:
+            return LlmUsageRepository().sum_tokens_since(session, day_start())
     except Exception:
         return -1
-    finally:
-        DatabaseManager.remove_session()
 
 
 def recent_usage(limit: int = 100) -> list[dict]:
     """最近 N 次调用，监控页的明细表。"""
-    from app.repositories import DatabaseManager
     from app.repositories.llm_usage_repository import LlmUsageRepository
 
-    session = DatabaseManager.get_session()
-    try:
+    with _usage_session() as session:
         rows = LlmUsageRepository().list_recent(session, limit)
-    finally:
-        DatabaseManager.remove_session()
     return [
         {
             "id": r.id,
