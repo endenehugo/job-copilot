@@ -4,10 +4,12 @@ import { ElMessage } from 'element-plus'
 import { notifyError } from '../../api'
 import { useAuthStore } from '../../stores/auth'
 import { useModelStore } from '../../stores/model'
+import { useRouter } from 'vue-router'
 import AppIcon from './AppIcon.vue'
 
 const auth = useAuthStore()
 const modelStore = useModelStore()
+const router = useRouter()
 
 const menuOpen = ref(false)
 const dialogVisible = ref(false)
@@ -54,6 +56,11 @@ function logout() {
   modelStore.load().catch(() => {})
 }
 
+function openStats() {
+  menuOpen.value = false
+  router.push('/admin')
+}
+
 function closeOnOutside() {
   menuOpen.value = false
 }
@@ -65,6 +72,9 @@ onBeforeUnmount(() => document.removeEventListener('click', closeOnOutside))
 <template>
   <div class="sidebar-footer" @click.stop>
     <div class="footer-menu" v-if="menuOpen">
+      <button class="footer-menu-item" @click="openStats">
+        <AppIcon name="chart" :size="15" /> 运行监控
+      </button>
       <button class="footer-menu-item" @click="logout">
         <AppIcon name="logout" :size="15" /> 退出登录
       </button>

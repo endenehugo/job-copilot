@@ -10,6 +10,12 @@ export const authApi = {
   me: () => client.get('/auth/me'),
 }
 
+// 管理员监控页（/admin）：LLM 计量聚合与最近调用明细
+export const adminApi = {
+  statsSummary: (hours = 24) => client.get('/admin/stats/summary', { params: { hours } }),
+  recentUsage: (limit = 100) => client.get('/admin/stats/usage/recent', { params: { limit } }),
+}
+
 export const modelsApi = {
   list: () => client.get('/models'),
 }
