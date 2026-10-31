@@ -34,7 +34,6 @@ from app.core.model_policy import (
 from app.core.model_scope import current_chat_model, request_model_scope
 from app.core.security import create_token, decode_token, hash_password, verify_password
 from app.repositories import AdminUserRepository, Base, DatabaseManager
-import app.repositories.admin_user_repository  # 确保 AdminUser 注册到 Base.metadata
 
 _TEST_DB_URL = "sqlite:///file:auth_test?mode=memory&cache=shared&uri=true"
 

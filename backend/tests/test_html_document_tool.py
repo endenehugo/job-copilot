@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import os
 
-import pytest
 
 from app.tools.html_document import HtmlDocumentTool
 

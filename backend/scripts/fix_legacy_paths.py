@@ -26,7 +26,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pymysql
-from dotenv import dotenv_values
 
 from app.core.config import settings
 from app.utils.resouce_utils import ResourceUtils

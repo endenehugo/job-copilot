@@ -2,7 +2,6 @@ import os
 import shutil
 import tempfile
 import unittest
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from app.services.conversation_chat_service import ConversationChatService

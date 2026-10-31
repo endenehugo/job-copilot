@@ -18,7 +18,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from langchain_core.documents import Document
 
-from app.core.config import settings
 from app.services.builtin_knowledge_service import BuiltinKnowledgeService
 from app.services.document_index_service import DocumentIndexService
 

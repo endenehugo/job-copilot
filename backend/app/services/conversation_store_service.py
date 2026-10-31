@@ -91,7 +91,7 @@ class ConversationStoreService:
         """
         from sqlalchemy import case, func, select
 
-        from app.repositories import ProjectRewrite, ProjectRewriteRepository
+        from app.repositories import ProjectRewrite
 
         ids = [item["conversation_id"] for item in items]
         if not ids:

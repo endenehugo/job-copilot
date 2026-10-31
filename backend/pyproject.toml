@@ -1,0 +1,16 @@
+# Ruff 配置：CI 的静态检查基线。
+# 起步只挡「会出错」的问题（E4/E7/E9/F：未定义名、未使用导入、重复定义、
+# 真语法问题）。风格类规则（isort 的 I、类型注解现代化的 UP 等）在存量代码
+# 里有 200+ 处，一次性纳入只会让 CI 变红_noise，留给后续专项。
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["resources"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# 本文件有意把 build_agent_system_prompt()（Agent 系统提示）顶在 import 之前：
+# 阅读主线是"提示词怎么写的"，依赖清单往后放。
+"app/services/conversation_chat_service.py" = ["E402"]

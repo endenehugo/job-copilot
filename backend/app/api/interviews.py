@@ -26,7 +26,6 @@ from app.core.model_scope import request_model_scope
 from app.core.ownership import (
     assert_child_owner,
     assert_conversation_owner,
-    check_owner,
     get_owner_key,
     require_writable,
 )

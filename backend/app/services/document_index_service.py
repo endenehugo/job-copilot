@@ -336,9 +336,11 @@ class DocumentIndexService:
 
     def _bm25_retrieve(self, conversation_id: str, query: str, k: int = 4) -> list[Document]:
         """BM25 关键词检索（基于 rank_bm25）。"""
-        try:
-            from rank_bm25 import BM25Okapi
-        except ImportError:
+        # 可用性探测：BM25Okapi 真正的使用在 _get_or_build_bm25_index 里，
+        # 这里只判断依赖装没装。find_spec 不触发模块加载，比空 import 探测干净。
+        from importlib.util import find_spec
+
+        if find_spec("rank_bm25") is None:
             logger.warning("rank_bm25 未安装，跳过 BM25 检索。请执行: pip install rank_bm25")
             return []
 

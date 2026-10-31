@@ -19,7 +19,6 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from langchain_community.chat_models import ChatTongyi
-from langchain_core.documents import Document
 
 from app.services.builtin_knowledge_service import BuiltinKnowledgeService
 from app.services.document_index_service import DocumentIndexService
@@ -47,7 +46,7 @@ def batch_score(llm, query, docs, top_k=TOP_K):
         "请判断每篇文档与用户问题的相关程度。\n\n"
         f"用户问题：{query}\n\n候选文档：\n" + "\n".join(numbered) + "\n\n"
         "请为每篇文档打 0-10 的整数分（0=完全不相关，10=高度相关）。"
-        f'只输出 JSON 数组，不要任何其他内容：\n[{{"id":0,"score":8}}, ...]'
+        '只输出 JSON 数组，不要任何其他内容：\n[{"id":0,"score":8}, ...]'
     )
     raw = llm.invoke(prompt).content.strip()
     items = json.loads(re.search(r"\[.*\]", raw, re.DOTALL).group(0))

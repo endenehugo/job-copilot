@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime
 
 from app.repositories import DatabaseManager
 from app.repositories.job_analysis_repository import JobAnalysisRepository

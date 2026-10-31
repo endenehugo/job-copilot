@@ -44,7 +44,6 @@ from app.repositories import (
     DatabaseManager,
     DocumentRepository,
     JobAnalysisRepository,
-    ResumeGeneration,
     ResumeGenerationRepository,
 )
 from app.utils import ResourceUtils, skill_loader

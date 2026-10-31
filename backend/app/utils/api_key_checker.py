@@ -7,7 +7,6 @@ r"""DashScope API Key 检测工具。
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from dataclasses import dataclass, field
@@ -86,7 +85,7 @@ def _get_api_key() -> tuple[str | None, str, list[str]]:
     # 2. 检查操作系统环境变量（包括 conda activate / VS Code 设置的）
     env_val = os.environ.get("DASHSCOPE_API_KEY")
     if env_val:
-        sources.append(f"系统环境变量 DASHSCOPE_API_KEY")
+        sources.append("系统环境变量 DASHSCOPE_API_KEY")
         final_key = env_val  # 环境变量优先于 .env
 
     # 3. 兜底：config_dev.py 默认值
