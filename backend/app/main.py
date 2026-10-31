@@ -11,16 +11,16 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, conversations, documents, exports, interviews, jobs, knowledge, models, resume_generation, resumes, skills, system
+from app.api import admin, auth, conversations, documents, exports, interviews, jobs, knowledge, models, resume_generation, resumes, skills, system
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.perf_trace import configure_perf_logging
+from app.core.rate_limit import RateLimitMiddleware
 from app.core.response import ok
 from app.core.visitor_middleware import VisitorMiddleware
 from app.utils import ResourceUtils
 from app.utils.api_key_checker import check_all
 
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -58,20 +58,32 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# 与旧版行为一致：开发期放开跨域；前端拦截器按信封 code 判错，不依赖 CORS 凭证
+# CORS 白名单：生产是同源部署（Nginx 托管前端 + 反代 /api），浏览器同源请求
+# 根本不经过 CORS，白名单留空即最小暴露面；开发期放行本地前端端口。
+# 之前 allow_origins=["*"] 的写法等于"任何网页都能让浏览器跨站调你的 API"。
+if settings.cors_allow_origins:
+    cors_origins = settings.cors_allow_origins
+elif settings.is_dev:
+    cors_origins = ["http://localhost:5174", "http://127.0.0.1:5174"]
+else:
+    cors_origins = []
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 # 访客身份：懒签发签名 Cookie，写 request.state.owner_key。
 # 放在 CORS 之后注册 = 在 CORS 内层，保证预检请求先被 CORS 处理掉
 app.add_middleware(VisitorMiddleware)
+# 限流放在最外层：配额/身份校验都还没跑就该把突发流量挡掉。
+# 自己解 cookie 取身份，不依赖 VisitorMiddleware 的执行顺序。
+app.add_middleware(RateLimitMiddleware)
 
 register_exception_handlers(app)
 app.include_router(system.router)
 app.include_router(auth.router)
+app.include_router(admin.router)
 app.include_router(models.router)
 app.include_router(skills.router)
 app.include_router(conversations.router)

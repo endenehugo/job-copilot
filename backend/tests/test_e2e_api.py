@@ -13,17 +13,13 @@
 from __future__ import annotations
 
 import io
-import json
-import os
-import tempfile
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import scoped_session, sessionmaker
 
 from app.repositories.mysql_base import Base, DatabaseManager
-import app.repositories.knowledge_entry_repository  # 确保 KnowledgeEntry 注册到 Base.metadata
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +44,8 @@ def _patch_db(sqlite_engine):
     )
 
     original_get_session = DatabaseManager.get_session.__func__ if hasattr(DatabaseManager.get_session, '__func__') else DatabaseManager.__dict__.get('get_session')
+    original_ensure_tables = DatabaseManager.ensure_tables.__func__ if hasattr(DatabaseManager.ensure_tables, '__func__') else DatabaseManager.__dict__.get('ensure_tables')
+    original_remove_session = DatabaseManager.remove_session.__func__ if hasattr(DatabaseManager.remove_session, '__func__') else DatabaseManager.__dict__.get('remove_session')
 
     @classmethod
     def _test_get_session(cls):
@@ -66,9 +64,13 @@ def _patch_db(sqlite_engine):
     DatabaseManager.remove_session = _test_remove_session
     yield
     factory.remove()
-    DatabaseManager.get_session = original_get_session
-    DatabaseManager.ensure_tables = classmethod(lambda cls: None)
-    DatabaseManager.remove_session = classmethod(lambda cls: None)
+    # 必须用 classmethod() 重新包一层再还原：直接赋回 __func__ 会把类方法
+    # 变成普通函数，排在后面的测试模块再走 DatabaseManager.get_session() 类访问
+    # 就会报 "missing 1 required positional argument: 'cls'"（跨文件污染）。
+    # ensure/remove 原来直接覆盖成 no-op classmethod 不还原，一并修正。
+    DatabaseManager.get_session = classmethod(original_get_session)
+    DatabaseManager.ensure_tables = classmethod(original_ensure_tables)
+    DatabaseManager.remove_session = classmethod(original_remove_session)
 
 
 @pytest.fixture(autouse=True)

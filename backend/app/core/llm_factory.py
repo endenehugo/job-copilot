@@ -57,6 +57,7 @@ from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langchain_openai import ChatOpenAI
 
 from app.core import perf_trace
+from app.core import llm_usage
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -148,10 +149,24 @@ def _chunk_tokens(chunk: Any) -> tuple[Optional[int], Optional[int]]:
 
 
 def _record_llm(model: str, started: float, *, fallback: bool, tokens=(None, None), error: Optional[str] = None) -> None:
-    """记录一次 LLM 调用到请求级计时；没有 trace 时直接返回，不影响原有行为。"""
+    """记录一次 LLM 调用：请求级计时（perf_trace）+ 持久计量（llm_usage）。
+
+    后者是配额熔断与管理员监控页的数据源；两者都不允许把业务调用挂掉，
+    各自内部吞异常。没有 trace 时 perf_trace 是空操作，llm_usage 照记
+    （purpose 落 background）——压缩等后台调用的消耗也要进全站预算。
+    """
+    dur_ms = (time.perf_counter() - started) * 1000.0
     perf_trace.record_llm_call(
         model,
-        (time.perf_counter() - started) * 1000.0,
+        dur_ms,
+        in_tokens=tokens[0],
+        out_tokens=tokens[1],
+        fallback=fallback,
+        error=error,
+    )
+    llm_usage.record_usage(
+        model=model,
+        duration_ms=dur_ms,
         in_tokens=tokens[0],
         out_tokens=tokens[1],
         fallback=fallback,

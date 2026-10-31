@@ -213,7 +213,35 @@ export const useChatStore = defineStore('chat', {
           ),
           signal: controller.signal,
         })
-        if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`)
+        if (!resp.ok || !resp.body) {
+          // 中间件层拒绝（限流）回的是真实 HTTP 4xx + 统一信封 JSON：
+          // 把信封里的中文 message 带出来，别只给一个 "HTTP 429"
+          let message = `HTTP ${resp.status}`
+          try {
+            const body = await resp.json()
+            if (body?.message) message = body.message
+          } catch {
+            // 非 JSON 响应，保留状态码文案
+          }
+          throw new Error(message)
+        }
+        // 流被后端在入口拒绝时（如每日配额熔断），返回的是统一信封 JSON 而不是
+        // SSE——不拦住的话会走下面的 SSE 解析，一个事件都收不到，气泡空白收场
+        const contentType = resp.headers.get('content-type') || ''
+        if (!contentType.includes('text/event-stream')) {
+          let message = '服务返回了意外的响应格式，请稍后重试'
+          let code = ''
+          try {
+            const body = await resp.json()
+            if (body?.message) message = body.message
+            code = body?.code ?? ''
+          } catch {
+            // 保留默认文案
+          }
+          const err = new Error(message)
+          err.code = code
+          throw err
+        }
 
         const reader = resp.body.getReader()
         const decoder = new TextDecoder('utf-8')

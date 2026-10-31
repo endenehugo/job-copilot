@@ -27,6 +27,7 @@ from app.core.deps import (
     get_conversation_store_service,
     get_document_index_service,
 )
+from app.core.llm_usage import check_chat_quota
 from app.core.model_policy import resolve_model
 from app.core.model_scope import request_conversation_scope, request_model_scope
 from app.core.ownership import (
@@ -141,6 +142,11 @@ def conversation_chat(
     if skill_error:
         return fail(skill_error, code=400)
 
+    # 每日配额熔断（访客），管理员豁免：放在一切昂贵操作之前
+    quota_error = check_chat_quota(role=role, owner_key=owner_key)
+    if quota_error:
+        return fail(quota_error[1], code=quota_error[0])
+
     try:
         with trace_scope("chat", conversation_id=conversation_id, mode=payload.mode) as trace, request_model_scope(
             payload.model, role
@@ -179,6 +185,13 @@ def conversation_chat_stream(
     skill_error = _skill_error(skill)
     if skill_error:
         return fail(skill_error, code=400)
+
+    # 每日配额熔断（访客）：必须在生成器启动前拒绝——流一旦开始，
+    # 中途就没有"整体失败"的语义了。这里走统一信封 JSON（HTTP 200 + code 429），
+    # 前端 sendStream 发现响应不是 text/event-stream 时按信封报错。
+    quota_error = check_chat_quota(role=role, owner_key=owner_key)
+    if quota_error:
+        return fail(quota_error[1], code=quota_error[0])
 
     # 模型白名单先在端点内校验（快速失败），作用域必须在生成器内部开启——
     # 生成器在响应阶段才被消费，端点里 with 一下就退出时生成器还没跑

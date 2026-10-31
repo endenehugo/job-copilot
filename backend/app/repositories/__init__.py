@@ -10,6 +10,7 @@ from .resume_version_repository import ResumeVersion, ResumeVersionRepository
 from .resume_generation_repository import ResumeGeneration, ResumeGenerationRepository
 from .project_rewrite_repository import ProjectRewrite, ProjectRewriteRepository
 from .generated_file_repository import GeneratedFile, GeneratedFileRepository
+from .llm_usage_repository import LlmUsage, LlmUsageRepository
 
 __all__ = [
     "Base",
@@ -38,4 +39,6 @@ __all__ = [
     "ProjectRewriteRepository",
     "GeneratedFile",
     "GeneratedFileRepository",
+    "LlmUsage",
+    "LlmUsageRepository",
 ]

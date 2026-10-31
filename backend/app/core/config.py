@@ -124,13 +124,19 @@ class Settings(BaseSettings):
     llm_max_retries: int = 2
 
     # —— 管理员认证 ——
-    # AUTH_SECRET：JWT 签名密钥；缺失时用进程内随机值并告警（重启后登录态失效）。
+    # AUTH_SECRET：JWT 签名密钥；生产环境缺失时启动即失败（fail fast）——
+    # 进程内随机密钥的兜底只适用于开发：重启即全体登录态失效，多进程/多机
+    # 场景还会互相验签失败。生成：python -c "import secrets; print(secrets.token_hex(32))"
     # ADMIN_USERNAME / ADMIN_INIT_PASSWORD：启动时 admin_users 表为空则自动建初始
     # 管理员；表非空则忽略。两者都未配置时不会创建任何管理员（登录将不可用）。
     auth_secret: str = ""
     auth_token_expire_hours: int = 24 * 7
     admin_username: str = ""
     admin_init_password: str = ""
+
+    # CORS 白名单：生产同源部署不需要跨域，留空即最小暴露面；开发期自动放行
+    # 本地前端端口。用 CORS_ALLOW_ORIGINS='["https://a.example.com"]'（JSON 数组）显式加域。
+    cors_allow_origins: list[str] = []
 
     mysql_host: str = "127.0.0.1"
     mysql_port: int = 3306
@@ -193,9 +199,40 @@ class Settings(BaseSettings):
     perf_trace_log: bool = True
     perf_trace_header: bool = False
 
+    # —— LLM 计量与配额（展示站防滥用，见 core/llm_usage.py）——
+    # llm_usage_log：每次 LLM 调用落一行到 llm_usage 表，是配额熔断与
+    #   管理员监控页的数据源。关掉它配额就只剩空壳，两个开关要一起动。
+    # visitor_daily_chat_limit：单访客每天 chat 请求上限（按 trace_id 去重）；
+    #   管理员豁免；0 = 不限。30 次足够一个面试官完整体验全部功能，
+    #   又能把一个循环脚本的日消耗压到免费额度可承受的范围。
+    # global_daily_token_limit：全站每天 token 预算（输入+输出合计，含失败调用）；
+    #   0 = 不限。访客身份只是一个 cookie，换一个就是新访客，所以单访客限额
+    #   挡不住脚本——这条全站预算才是真正的底线。800k 约等于免费额度体系
+    #   （每模型 100 万/90 天、8 个模型）能长期承受的日均消耗。
+    llm_usage_log: bool = True
+    quota_enabled: bool = True
+    visitor_daily_chat_limit: int = 30
+    global_daily_token_limit: int = 800_000
+
+    # —— 接口限流（公网防滥用，见 core/rate_limit.py；0 = 关闭该窗口）——
+    # 与配额熔断互补：熔断管"今天总共烧多少"，限流管"烧多快"。
+    rate_limit_enabled: bool = True
+    rate_limit_ai_per_minute: int = 10
+    rate_limit_ai_per_hour: int = 40
+    rate_limit_upload_per_hour: int = 10
+    rate_limit_login_per_10min: int = 5
+
     resources_root: str = str(_BACKEND_ROOT / "resources")
 
     def model_post_init(self, __context) -> None:
+        # AUTH_SECRET 在生产环境是硬性前置条件：缺了就在启动期明确报错，
+        # 而不是带着"重启即全体登出、跨进程验签失败"的隐雷上线
+        if self.env not in {"dev", "test"} and not self.auth_secret:
+            raise RuntimeError(
+                "生产环境必须配置 AUTH_SECRET（JWT 签名密钥）。"
+                "生成：python -c \"import secrets; print(secrets.token_hex(32))\"，"
+                "写入 .env 后重启。"
+            )
         if self.dashscope_api_key:
             os.environ.setdefault("DASHSCOPE_API_KEY", self.dashscope_api_key)
         if self.metaso_api_key:
