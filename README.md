@@ -1,10 +1,35 @@
 # Job Copilot（求职助手 Agent 平台）
 
+[![CI](https://github.com/endenehugo/job-copilot/actions/workflows/ci.yml/badge.svg)](https://github.com/endenehugo/job-copilot/actions/workflows/ci.yml)
+
 面向求职场景的垂直 Agent 应用：JD 解析、简历评分、项目经历优化、模拟面试、内置面试知识库，以及基于简历/JD 的会话级 RAG 问答。
 
 - 后端：FastAPI + SQLAlchemy 2.0 + MySQL + LangChain（主模型 qwen3.8-max / 小模型 qwen3.8-flash / 多模态 qwen-vl-plus + text-embedding-v3 + FAISS + BM25 混合检索）
 - 前端：Vue 3 + Vite + Pinia + Element Plus（开发中）
 - 文档：接口文档由 FastAPI 自动生成，见 `/docs`
+
+## 架构
+
+```mermaid
+flowchart LR
+    FE["Vue 3 + Pinia<br/>SSE 打字机 / 流式中断"]
+    NG["Nginx<br/>TLS · SSE 关缓冲"]
+    MW["中间件链<br/>限流 → 访客签名 Cookie → CORS"]
+    API["API 层<br/>统一信封 ok / fail / degraded"]
+    SVC["服务层<br/>Agent 工具循环 · 混合检索重排<br/>上下文压缩 · 幻觉校验"]
+    REPO["仓储层<br/>SQLAlchemy 2.0 · 乐观锁"]
+    FAC["llm_factory<br/>降级链 · 端点分流 · 思考开关"]
+    QUOTA["llm_usage 计量<br/>配额熔断"]
+    DB[("MySQL")]
+    DS[("FAISS + BM25<br/>本地 resources")]
+    LLM["百炼 DashScope<br/>qwen3.8-max / flash / vl-plus"]
+
+    FE -->|HTTPS| NG --> MW --> API --> SVC
+    SVC --> REPO --> DB
+    SVC --> DS
+    SVC --> FAC --> LLM
+    SVC --> QUOTA --> DB
+```
 
 > 项目正在从 Flask 单体原型（llmrag）向前后端分离架构迁移，核心服务层沿用原型中经过线上排障验证的实现。
 > 模型可换：清单见 `backend/app/core/config.py :: SELECTABLE_LLM_MODELS`，改 `.env` 的 `LLM_MODEL` 即可切换；这一代新模型（qwen3.8 系 / deepseek / kimi）走百炼 OpenAI 兼容模式，老模型走原生 ChatTongyi，由 `core/llm_factory` 按模型自动选择客户端。
@@ -56,6 +81,18 @@ npm run dev   # http://localhost:5174（开发代理已指向 127.0.0.1:8018 后
 
 部署要点：Nginx 对 `/api/v1/conversation/chat/stream` 必须 `proxy_buffering off`；后端保持 `workers=1`（进程内缓存语义）；生产依赖已最小化，无 torch/OpenMP 冲突；站点默认同时监听 80 与 8080（裸 IP 走 80 实测可用，受限的是未备案域名）。
 
+## 运行监控（管理员）
+
+侧栏底部登录管理员后，头像菜单进入 **运行监控**（路由 `/admin`）：
+
+- 今日全站 Token 预算水位与单访客限额；
+- 时间范围内（24h / 7d / 30d）的调用总量、按模型、按用途的 P50/P95 耗时；
+- 降级链触发次数、错误数、用量 Top 访客与最近调用明细。
+
+数据源是 `llm_usage` 表：`core/llm_factory` 在唯一出口埋点，每次模型调用落一行
+（模型 / token / 耗时 / 是否降级 / 错误），同一份数据驱动**配额熔断**——
+访客每日 chat 次数与全站每日 token 预算，超限返回友好信封而不是把免费额度烧穿。
+
 ## 安全与密钥
 
 - **密钥只放 `.env`**（`DASHSCOPE_API_KEY` / `METASO_API_KEY` / `MYSQL_PASSWORD`），`.env` 与 `.env.*` 已被 `.gitignore` 忽略，仓库里只保留 `.env.example` 与 `deploy/.env.production.example` 两个占位模板。
@@ -71,6 +108,8 @@ npm run dev   # http://localhost:5174（开发代理已指向 127.0.0.1:8018 后
 
   命中时只报文件名与模式名，**不回显匹配原文**，避免密钥进终端日志。
 - 站点本身没有账号体系，公网访问请用 Nginx Basic Auth 门禁：`sudo bash deploy/enable-basic-auth.sh`（详见 `deploy/部署指南.md` 第八章）。
+- **限流与配额**（公网防滥用，均可经 `.env` 调整）：`core/rate_limit` 按 AI 接口（10 次/分、40 次/时）、上传（10 次/时）、登录（5 次/10 分钟）三桶滑动窗口限流，管理员豁免；`core/llm_usage` 落库每次模型调用，驱动访客每日 chat 次数（默认 30）与全站每日 token 预算（默认 80 万）两级熔断。
+- 生产环境 `AUTH_SECRET` 必填（缺失时启动即失败）；CORS 白名单仅开发期放行本地端口，生产同源部署默认零跨域。
 
 ## 免费额度探测工具
 
