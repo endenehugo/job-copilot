@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, Integer, String, Text, desc, select
+from sqlalchemy import DateTime, Float, Integer, String, desc, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.repositories.mysql_base import Base
