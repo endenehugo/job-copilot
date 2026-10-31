@@ -13,7 +13,8 @@ class ConversationMessage(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     message_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
-    conversation_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    # index=True 只对 create_all 新建的表生效；存量表的补齐见 mysql_base._INDEX_PATCHES
+    conversation_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     role: Mapped[str] = mapped_column(String(32), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

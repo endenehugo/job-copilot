@@ -13,7 +13,8 @@ class ConversationDocument(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     document_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
-    conversation_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    # index=True 只对 create_all 新建的表生效；存量表的补齐见 mysql_base._INDEX_PATCHES
+    conversation_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     original_name: Mapped[str] = mapped_column(String(255), nullable=False)
     stored_name: Mapped[str] = mapped_column(String(255), nullable=False)
     stored_path: Mapped[str] = mapped_column(String(500), nullable=False)

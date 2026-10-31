@@ -28,6 +28,27 @@ _COLUMN_PATCHES = {
     },
 }
 
+# 后补的索引：列早已存在（只给模型加 index=True 长不出来），单独 ALTER 补。
+# 与 _COLUMN_PATCHES 分开登记是因为幂等判据不同：一个看列名，一个看索引名。
+# 这两条是全站最高频查询（每轮 chat 的历史加载、每次会话详情都走
+# list_by_conversation_id），MySQL 8 的 ADD INDEX 走 INPLACE 不锁表，
+# 消息表涨到十万行级也秒级完成。演进方向（Alembic 取代这两张补丁表）
+# 见 docs/2026-10-31-企业级演进路线.md。
+_INDEX_PATCHES = {
+    "conversation_messages": {
+        "idx_messages_conversation": (
+            "ALTER TABLE conversation_messages "
+            "ADD INDEX idx_messages_conversation (conversation_id)"
+        ),
+    },
+    "conversation_documents": {
+        "idx_documents_conversation": (
+            "ALTER TABLE conversation_documents "
+            "ADD INDEX idx_documents_conversation (conversation_id)"
+        ),
+    },
+}
+
 
 @dataclass
 class DatabaseManager:
@@ -102,7 +123,7 @@ class DatabaseManager:
 
     @classmethod
     def _ensure_columns(cls):
-        """幂等补列：缺哪列补哪列，已存在则跳过。
+        """幂等补列 + 补索引：缺哪个补哪个，已存在则跳过。
 
         失败只告警不抛——DBA 账号没有 ALTER 权限时仍要能启动，
         留一条明确的错误日志比直接崩更好排查。
@@ -122,6 +143,20 @@ class DatabaseManager:
                     logger.warning("已自动补列 %s.%s", table, column)
                 except Exception as exc:  # noqa: BLE001
                     logger.error("自动补列失败 %s.%s：%s（请手工执行：%s）", table, column, exc, ddl)
+        for table, patches in _INDEX_PATCHES.items():
+            try:
+                existing = {index["name"] for index in inspector.get_indexes(table)}
+            except Exception:
+                continue
+            for index_name, ddl in patches.items():
+                if index_name in existing:
+                    continue
+                try:
+                    with cls._engine.begin() as connection:
+                        connection.execute(text(ddl))
+                    logger.warning("已自动补索引 %s.%s", table, index_name)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("自动补索引失败 %s.%s：%s（请手工执行：%s）", table, index_name, exc, ddl)
         inspector.clear_cache()
 
     @classmethod
