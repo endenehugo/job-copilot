@@ -823,9 +823,24 @@ class TestExport:
         assert resp.json()["code"] == 400
 
 
+def _admin_headers() -> dict:
+    """知识库的写接口要求管理员，测试里现签一个 token。
+
+    不放在模块级：create_token 依赖 AUTH_SECRET，导入期取值会让
+    「没配密钥」的环境在收集阶段就失败，而不是在用例里给出明确报错。
+    """
+    from app.core.security import create_token
+
+    return {"X-Admin-Token": create_token("admin")}
+
+
 class TestKnowledge:
-    def test_rebuild(self, client):
+    def test_rebuild_requires_admin(self, client):
         resp = client.post("/api/v1/knowledge/rebuild")
+        assert resp.status_code == 403
+
+    def test_rebuild(self, client):
+        resp = client.post("/api/v1/knowledge/rebuild", headers=_admin_headers())
         body = resp.json()
         assert body["code"] == "success"
 
@@ -846,13 +861,24 @@ class TestKnowledge:
         assert body["code"] == "success"
         assert "entries" in body["data"]
 
-    def test_delete_entry(self, client):
+    def test_delete_entry_requires_admin(self, client):
+        # 删除会连带重建索引且不可撤销，未带管理员令牌一律 403
         resp = client.delete("/api/v1/knowledge/entries/fake_id")
+        assert resp.status_code == 403
+
+    def test_delete_entry(self, client):
+        resp = client.delete("/api/v1/knowledge/entries/fake_id", headers=_admin_headers())
         body = resp.json()
         assert body["code"] == "success" or body["code"] == 404
 
-    def test_self_expand(self, client):
+    def test_self_expand_requires_admin(self, client):
         resp = client.post("/api/v1/knowledge/self-expand", json={"count": 2})
+        assert resp.status_code == 403
+
+    def test_self_expand(self, client):
+        resp = client.post(
+            "/api/v1/knowledge/self-expand", json={"count": 2}, headers=_admin_headers()
+        )
         body = resp.json()
         assert body["code"] == "success"
         assert "added" in body["data"]

@@ -2,9 +2,11 @@
 import { onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { notifyError } from '../../api'
+import { useAuthStore } from '../../stores/auth'
 import { useKnowledgeStore } from '../../stores/knowledge'
 
 const kb = useKnowledgeStore()
+const auth = useAuthStore()
 
 onMounted(() => kb.loadStatus())
 
@@ -43,7 +45,11 @@ async function onExpand() {
 <template>
   <div>
     <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 8px">
-      <el-button size="small" :loading="kb.rebuilding" @click="onRebuild">重建索引</el-button>
+      <!-- 重建索引与自主扩充是管理员操作（后端 require_admin）：
+           访客看到按钮却点出 403，不如不显示 -->
+      <el-button v-if="auth.isAdmin" size="small" :loading="kb.rebuilding" @click="onRebuild">
+        重建索引
+      </el-button>
       <span v-if="kb.status" class="hint">
         {{ kb.status.index_exists ? `已建索引 · ${kb.status.total_documents} 条` : '未建索引' }}
       </span>
@@ -65,7 +71,9 @@ async function onExpand() {
     />
     <div style="display: flex; gap: 8px; margin-top: 6px">
       <el-button size="small" type="primary" :loading="kb.submitting" @click="onSubmit">提交 AI 审核</el-button>
-      <el-button size="small" :loading="kb.expanding" @click="onExpand">AI 自主扩充</el-button>
+      <el-button v-if="auth.isAdmin" size="small" :loading="kb.expanding" @click="onExpand">
+        AI 自主扩充
+      </el-button>
     </div>
 
     <div v-if="kb.reviewResult" class="kb-result">

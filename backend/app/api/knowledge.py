@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
 from app.core.deps import get_builtin_knowledge_service
 from app.core.response import fail, ok
+from app.core.security import require_admin
 from app.schemas.knowledge import KnowledgeSubmitRequest, SelfExpandRequest
 from app.utils import ResourceUtils
 
@@ -19,7 +20,12 @@ router = APIRouter(prefix="/api/v1")
 
 
 @router.post("/knowledge/rebuild")
-def rebuild_knowledge() -> dict:
+def rebuild_knowledge(_role: str = Depends(require_admin)) -> dict:
+    """重建全量向量索引。
+
+    管理员专属：FAISS 重建要读全量语料并重算 embedding，单核机器上
+    几百毫秒到数秒，公网可触发等于给了一个免费的 CPU 打满按钮。
+    """
     result = get_builtin_knowledge_service().rebuild_index()
     return ok(result, message=f"知识库索引重建完成，共 {result['chunk_count']} 个文本块")
 
@@ -49,7 +55,12 @@ def list_knowledge_entries(
 
 
 @router.delete("/knowledge/entries/{entry_id}")
-def delete_knowledge_entry(entry_id: str) -> dict:
+def delete_knowledge_entry(entry_id: str, _role: str = Depends(require_admin)) -> dict:
+    """删除条目。
+
+    管理员专属：删除会连带重建索引，是破坏性且不可撤销的操作，
+    之前挂在公网上等于任何人都能清空知识库。前端也没有暴露入口。
+    """
     try:
         get_builtin_knowledge_service().remove_entry(entry_id)
     except ValueError as exc:
@@ -58,8 +69,14 @@ def delete_knowledge_entry(entry_id: str) -> dict:
 
 
 @router.post("/knowledge/self-expand")
-def self_expand_knowledge(payload: SelfExpandRequest) -> dict:
-    """AI 自主扩充：生成候选并自审，通过才入库。"""
+def self_expand_knowledge(
+    payload: SelfExpandRequest, _role: str = Depends(require_admin)
+) -> dict:
+    """AI 自主扩充：生成候选并自审，通过才入库。
+
+    管理员专属：一次要连烧多条生成 + 审核的模型调用，访客可触发的话
+    单站 token 预算会被这一个按钮吃掉大半。
+    """
     result = get_builtin_knowledge_service().self_expand(payload.count)
     return ok(
         result,
